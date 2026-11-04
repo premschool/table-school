@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KRUSB75 — ระบบตารางเรียน & จัดสอนแทน</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<!-- LOADING -->
+<div class="loading-overlay" id="loadingOverlay">
+<div class="spinner"></div>
+<div class="loading-text" id="loadingText">กำลังโหลด...</div>
+</div>
+
+<!-- ★ FULL-PAGE LOGIN SCREEN ★ -->
+<div class="login-screen" id="loginScreen">
+<div class="login-card">
+<div class="login-logo-area">
+<div class="login-icon-circle" id="loginIconArea"><i class="fas fa-lock"></i></div>
+</div>
+<div class="login-school-name" id="loginSchoolName"></div>
+<h2>เข้าสู่ระบบ</h2>
+<p class="login-subtitle">ระบบตารางเรียน & จัดสอนแทน</p>
+<form id="loginForm" onsubmit="return false;">
+<div class="login-error" id="loginError"><i class="fas fa-exclamation-circle"></i><span id="loginErrorText"></span></div>
+<div class="login-input-group">
+<i class="fas fa-user"></i>
+<input type="text" id="loginId" placeholder="ชื่อผู้ใช้" autocomplete="username" required>
+</div>
+<div class="login-input-group">
+<i class="fas fa-lock"></i>
+<input type="password" id="loginPw" placeholder="รหัสผ่าน" autocomplete="current-password" required style="padding-right:44px">
+<button type="button" class="toggle-pw" onclick="togglePasswordVisibility()"><i class="fas fa-eye" id="pwEyeIcon"></i></button>
+</div>
+<div class="login-options">
+<label><input type="checkbox" id="rememberMe"> จดจำฉันไว้</label>
+<span class="text-muted">ลืมรหัสผ่านกรุณาติดต่อผู้ดูแลระบบ</span>
+</div>
+<button type="submit" class="login-btn" onclick="doLogin()"><i class="fas fa-sign-in-alt"></i> เข้าสู่ระบบ</button>
+</form>
+<div class="login-footer"><span class="login-version">KRUSB75 v1.0</span></div>
+</div>
+</div>
+
+<!-- ★ APP SHELL (ซ่อนจนกว่าจะ login) ★ -->
+<div id="appShell" class="app-hidden">
+
+<!-- SIDEBAR -->
+<aside class="sidebar" id="sidebar">
+<div class="sidebar-brand">
+<div class="sidebar-brand-icon" id="sidebarLogoIcon"><i class="fas fa-school"></i></div>
+<span class="sidebar-brand-name" id="sidebarBrandName">KRUSB75</span>
+</div>
+<nav class="sidebar-nav" id="sidebarNav">
+<div class="nav-section-label">เมนูหลัก</div>
+<div class="nav-item active" data-section="dashboard" onclick="showSection('dashboard')"><i class="fas fa-tachometer-alt"></i><span>แดชบอร์ด</span><span class="nav-badge" id="pendingBadge" style="display:none">0</span></div>
+
+<div class="nav-section-label">ตารางเรียน</div>
+<div class="nav-item scheduler-only" data-section="timetable-edit" onclick="showSection('timetable-edit')"><i class="fas fa-th"></i><span>จัดตารางเรียน</span></div>
+<div class="nav-item scheduler-only" data-section="timetable-class" onclick="showSection('timetable-class')"><i class="fas fa-chalkboard"></i><span>ตารางเรียนรายชั้น</span></div>
+<div class="nav-item" data-section="timetable-class-potn" onclick="showSection('timetable-class-potn')"><i class="fas fa-chalkboard"></i><span>ตารางเรียนชั้น ม.1-3</span></div>
+<div class="nav-item" data-section="timetable-class-46" onclick="showSection('timetable-class-46')"><i class="fas fa-chalkboard"></i><span>ตารางเรียนชั้น ม.4-6</span></div>
+<div class="nav-section-label teacher-only">ตารางสอน</div>
+<div class="nav-item" data-section="timetable-teacher" onclick="showSection('timetable-teacher')"><i class="fas fa-user-clock"></i><span>ตารางสอนรายครู</span></div>
+
+<div class="nav-section-label">ระบบลา</div>
+<div class="nav-item" data-section="leave-submit" onclick="showSection('leave-submit')"><i class="fas fa-file-alt"></i><span>ส่งใบลา</span></div>
+<div class="nav-item admin-only" data-section="leave-approve" onclick="showSection('leave-approve')"><i class="fas fa-clipboard-check"></i><span>อนุมัติใบลา</span><span class="nav-badge" id="pendingLeaveBadge" style="display:none">0</span></div>
+<div class="nav-item" data-section="leave-history" onclick="showSection('leave-history')"><i class="fas fa-history"></i><span>ประวัติการลา</span></div>
+
+<div class="nav-section-label">สอนแทน</div>
+<div class="nav-item scheduler-only" data-section="substitute" onclick="showSection('substitute')"><i class="fas fa-exchange-alt"></i><span>จัดครูสอนแทน</span><span class="nav-badge" id="unassignedBadge" style="display:none">0</span></div>
+<div class="nav-item" data-section="substitute-history" onclick="showSection('substitute-history')"><i class="fas fa-list-alt"></i><span>ประวัติสอนแทน</span></div>
+<div class="nav-item" data-section="substitute-assignment-doc" onclick="showSection('substitute-assignment-doc')"><i class="fas fa-file-alt"></i><span>ใบมอบหมายสอนแทน</span></div>
+
+<div class="nav-section-label scheduler-only">ตั้งค่า</div>
+<div class="nav-item scheduler-only" data-section="manage-teachers" onclick="showSection('manage-teachers')"><i class="fas fa-users-cog"></i><span>จัดการครู</span></div>
+<div class="nav-item scheduler-only" data-section="manage-subjects" onclick="showSection('manage-subjects')"><i class="fas fa-book"></i><span>จัดการรายวิชา</span></div>
+<div class="nav-item scheduler-only" data-section="manage-classrooms" onclick="showSection('manage-classrooms')"><i class="fas fa-school"></i><span>จัดการชั้นเรียน</span></div>
+<div class="nav-item scheduler-only" data-section="manage-periods" onclick="showSection('manage-periods')"><i class="fas fa-clock"></i><span>กำหนดคาบเรียน</span></div>
+<div class="nav-item admin-only" data-section="settings" onclick="showSection('settings')"><i class="fas fa-cog"></i><span>ตั้งค่าระบบ</span></div>
+
+<div class="nav-section-label">บัญชี</div>
+<div class="nav-item" data-section="profile" onclick="showSection('profile')"><i class="fas fa-user-circle"></i><span>ข้อมูลส่วนตัว</span></div>
+</nav>
+<div class="sidebar-footer" id="sidebarFooter">
+<div id="sidebarRoleSwitcher" style="display:none"></div>
+<div class="sidebar-user"><div class="sidebar-avatar" id="sidebarAvatar">U</div><div class="sidebar-user-info"><div class="sidebar-user-name" id="sidebarUserName">ชื่อผู้ใช้</div><div class="sidebar-user-role" id="sidebarUserRole">ครู</div></div></div>
+</div>
+</aside>
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
+<!-- TOP NAVBAR -->
+<header class="top-navbar" id="topNavbar">
+<div class="top-left">
+<button class="btn-toggle" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
+<span class="page-title" id="topPageTitle">แดชบอร์ด</span>
+</div>
+<div class="top-right">
+<div class="guest-btns" id="guestBtns"><button class="btn btn-primary btn-sm" onclick="showLoginScreen()"><i class="fas fa-sign-in-alt"></i> เข้าสู่ระบบ</button></div>
+<div class="user-dropdown d-none" id="userArea">
+<div class="user-trigger" onclick="toggleUserDropdown()">
+<div class="top-avatar" id="topAvatar">U</div>
+<div class="top-user-info d-none d-md-block"><div class="top-user-name" id="topUserName">ผู้ใช้</div><div class="top-role-badge" id="topRoleBadge">ครู</div></div>
+<i class="fas fa-chevron-down" style="font-size:.65rem;color:var(--text-muted)"></i>
+</div>
+<div class="dropdown-menu-custom" id="userDropdown">
+<div id="dropdownRoleSwitcher" style="display:none"></div>
+<div class="dropdown-divider" id="dropdownRoleDivider"></div>
+<div class="dropdown-item" onclick="showSection('profile')"><i class="fas fa-user-circle"></i>ข้อมูลส่วนตัว</div>
+<div class="dropdown-divider"></div>
+<div class="dropdown-item danger" onclick="doLogout()"><i class="fas fa-sign-out-alt"></i>ออกจากระบบ</div>
+</div>
+</div>
+</div>
+</header>
+
+<!-- MAIN CONTENT -->
+<main class="main-content" id="mainContent">
+
+<!-- ── DASHBOARD ── -->
+<div class="page-section active" id="section-dashboard">
+<div class="stat-grid" id="dashStatCards"></div>
+<!-- Today Schedule (Teacher only) -->
+<div class="content-card mb-3" id="todayScheduleCard" style="display:none">
+<div class="card-header-custom">
+<h3><i class="fas fa-calendar-day text-primary"></i><span id="todayTitle">ตารางสอนวันนี้</span></h3>
+<div class="d-flex gap-2 align-items-center">
+<button class="btn btn-outline btn-sm" onclick="shiftDashDay(-1)"><i class="fas fa-chevron-left"></i></button>
+<span id="todayDateLabel" style="font-size:.85rem;min-width:120px;text-align:center"></span>
+<button class="btn btn-outline btn-sm" onclick="shiftDashDay(1)"><i class="fas fa-chevron-right"></i></button>
+</div>
+</div>
+<div class="table-responsive">
+<table class="table table-sm table-bordered mb-0" id="todayScheduleTable">
+<thead><tr><th style="width:50px">คาบ</th><th>เวลา</th><th>วิชา</th><th>ห้องเรียน</th><th>ห้องสอน</th><th>หมายเหตุ</th></tr></thead>
+<tbody></tbody>
+</table>
+</div>
+</div>
+<div class="row g-3">
+<div class="col-lg-8"><div class="content-card"><div class="card-header-custom"><h3><i class="fas fa-chart-bar text-primary"></i>สถิติการลารายเดือน</h3></div><div class="chart-container"><canvas id="monthlyChart"></canvas></div></div></div>
+<div class="col-lg-4"><div class="content-card"><div class="card-header-custom"><h3><i class="fas fa-chart-pie text-success"></i>ภาระงานสอนแทน</h3></div><div class="chart-container"><canvas id="workloadChart"></canvas></div></div></div>
+</div>
+</div>
+
+<!-- ── TIMETABLE EDIT (D&D) ── -->
+<div class="page-section" id="section-timetable-edit">
+<div class="content-card mb-3">
+<div class="card-header-custom">
+<h3><i class="fas fa-th text-primary"></i>จัดตารางเรียน (Drag & Drop)</h3>
+<div class="d-flex gap-2">
+<select id="ttEditClass" class="form-select form-select-sm" style="width:auto" onchange="loadTimetableForEdit()"><option value="">-- เลือกห้อง --</option></select>
+<button class="btn btn-primary btn-sm" onclick="saveTimetableFromUI()"><i class="fas fa-save"></i> บันทึก</button>
+<button class="btn btn-outline btn-sm" onclick="clearCurrentTimetable()"><i class="fas fa-eraser"></i> ล้าง</button>
+</div>
+</div>
+<div class="row">
+<div class="col-lg-9"><div class="timetable-wrapper"><table class="timetable" id="timetableGrid"></table></div></div>
+<div class="col-lg-3"><div class="subject-palette" id="subjectPalette"><div class="palette-search"><input type="text" class="form-control form-control-sm" placeholder="ค้นหาวิชา..." oninput="filterPalette(this.value)"></div><div id="paletteItems"></div></div></div>
+</div>
+<div id="scheduleProgress" class="schedule-progress" style="display:none"></div>
+</div>
+</div>
+
+<!-- ── TIMETABLE CLASS VIEW ── -->
+<div class="page-section" id="section-timetable-class">
+<div class="content-card">
+<div class="card-header-custom">
+<h3><i class="fas fa-chalkboard text-primary"></i>ตารางเรียนรายชั้น</h3>
+<div class="d-flex gap-2">
+<select id="ttViewClass" class="form-select form-select-sm" style="width:auto" onchange="loadClassTimetableView()"><option value="">-- เลือกห้อง --</option></select>
+<button class="btn btn-outline btn-sm no-print" onclick="printClassTimetable()"><i class="fas fa-print"></i> พิมพ์</button>
+</div>
+</div>
+<div class="print-options no-print">
+<span class="print-opt-label"><i class="fas fa-cog"></i> ตั้งค่าพิมพ์:</span>
+<label><input type="checkbox" id="printCode1" checked> พิมพ์รหัสวิชา</label>
+<label><input type="checkbox" id="printName1"> พิมพ์ชื่อวิชา</label>
+<span class="print-opt-sep">|</span>
+<label><input type="radio" name="teacherStyle1" value="short" checked> ชื่อย่อ (ครูสมชาย)</label>
+<label><input type="radio" name="teacherStyle1" value="full"> ชื่อเต็ม (นายสมชาย ใจดี)</label>
+<span class="print-opt-sep">|</span>
+<label><input type="radio" name="printOrient1" value="landscape" checked> แนวนอน</label>
+<label><input type="radio" name="printOrient1" value="portrait"> แนวตั้ง</label>
+</div>
+<div class="timetable-wrapper"><table class="timetable" id="classViewGrid"></table></div>
+</div>
+</div>
+
+<!-- ── POTN CLASS TIMETABLE VIEW ── -->
+<div class="page-section" id="section-timetable-class-potn">
+<div class="content-card">
+<div class="card-header-custom">
+<h3><i class="fas fa-chalkboard text-primary"></i>ตารางเรียนชั้น ม.1-3</h3>
+<div class="d-flex gap-2">
+<select id="ttViewClassPotn" class="form-select form-select-sm" style="width:auto" onchange="loadClassPotnTimetableView()"><option value="">-- เลือกห้อง --</option><option value="ม.1/1">ม.1/1</option><option value="ม.1/2">ม.1/2</option><option value="ม.1/3">ม.1/3</option><option value="ม.2/1">ม.2/1</option><option value="ม.2/2">ม.2/2</option><option value="ม.2/3">ม.2/3</option><option value="ม.3/1">ม.3/1</option><option value="ม.3/2">ม.3/2</option><option value="ม.3/3">ม.3/3</option></select>
+<button class="btn btn-outline btn-sm no-print" onclick="printClassPotnTimetable()"><i class="fas fa-print"></i> พิมพ์</button>
+</div>
+</div>
+<div class="print-options no-print">
+<span class="print-opt-label"><i class="fas fa-cog"></i> ตั้งค่าพิมพ์:</span>
+<label><input type="checkbox" id="printCode3" checked> พิมพ์รหัสวิชา</label>
+<label><input type="checkbox" id="printName3"> พิมพ์ชื่อวิชา</label>
+<span class="print-opt-sep">|</span>
+<label><input type="radio" name="teacherStyle3" value="short" checked> ชื่อย่อ (ครูสมชาย)</label>
+<label><input type="radio" name="teacherStyle3" value="full"> ชื่อเต็ม (นายสมชาย ใจดี)</label>
+<span class="print-opt-sep">|</span>
+<label><input type="radio" name="printOrient3" value="landscape" checked> แนวนอน</label>
+<label><input type="radio" name="printOrient3" value="portrait"> แนวตั้ง</label>
+</div>
+<div class="timetable-wrapper"><table class="timetable" id="classPotnViewGrid"></table></div>
+</div>
+</div>
+
+<!-- ── CLASS 4-6 TIMETABLE VIEW ── -->
+<div class="page-section" id="section-timetable-class-46">
+<div class="content-card">
+<div class="card-header-custom">
+<h3><i class="fas fa-chalkboard text-primary"></i>ตารางเรียนชั้น ม.4-6</h3>
+<div class="d-flex gap-2">
+<select id="ttViewClass46" class="form-select form-select-sm" style="width:auto" onchange="loadClass46TimetableView()"><option value="">-- เลือกห้อง --</option><option value="ม.4/1">ม.4/1</option><option value="ม.4/2">ม.4/2</option><option value="ม.4/3">ม.4/3</option><option value="ม.5/1">ม.5/1</option><option value="ม.5/2">ม.5/2</option><option value="ม.5/3">ม.5/3</option><option value="ม.6/1">ม.6/1</option><option value="ม.6/2">ม.6/2</option><option value="ม.6/3">ม.6/3</option></select>
+<button class="btn btn-outline btn-sm no-print" onclick="printClass46Timetable()"><i class="fas fa-print"></i> พิมพ์</button>
+</div>
+</div>
+<div class="print-options no-print">
+<span class="print-opt-label"><i class="fas fa-cog"></i> ตั้งค่าพิมพ์:</span>
+<label><input type="checkbox" id="printCode4" checked> พิมพ์รหัสวิชา</label>
+<label><input type="checkbox" id="printName4"> พิมพ์ชื่อวิชา</label>
+<span class="print-opt-sep">|</span>
+<label><input type="radio" name="teacherStyle4" value="short" checked> ชื่อย่อ (ครูสมชาย)</label>
+<label><input type="radio" name="teacherStyle4" value="full"> ชื่อเต็ม (นายสมชาย ใจดี)</label>
+<span class="print-opt-sep">|</span>
+<label><input type="radio" name="printOrient4" value="landscape" checked> แนวนอน</label>
+<label><input type="radio" name="printOrient4" value="portrait"> แนวตั้ง</label>
+</div>
+<div class="timetable-wrapper"><table class="timetable" id="class46ViewGrid"></table></div>
+</div>
+</div>
+
+<!-- ── TIMETABLE TEACHER VIEW ── -->
+<div class="page-section" id="section-timetable-teacher">
+<div class="content-card">
+<div class="card-header-custom">
+<h3><i class="fas fa-user-clock text-primary"></i>ตารางสอนรายครู</h3>
+<div class="d-flex gap-2">
+<select id="ttViewTeacher" class="form-select form-select-sm" style="width:auto" onchange="loadTeacherTimetableView()"><option value="">-- เลือกครู --</option></select>
+<button class="btn btn-outline btn-sm no-print" onclick="printTeacherTimetable()"><i class="fas fa-print"></i> พิมพ์</button>
+</div>
+</div>
+<div class="print-options no-print">
+<span class="print-opt-label"><i class="fas fa-cog"></i> ตั้งค่าพิมพ์:</span>
+<label><input type="checkbox" id="printCode2" checked> พิมพ์รหัสวิชา</label>
+<label><input type="checkbox" id="printName2"> พิมพ์ชื่อวิชา</label>
+<span class="print-opt-sep">|</span>
+<label><input type="radio" name="teacherStyle2" value="short" checked> ชื่อย่อ (ครูสมชาย)</label>
+<label><input type="radio" name="teacherStyle2" value="full"> ชื่อเต็ม (นายสมชาย ใจดี)</label>
+<span class="print-opt-sep">|</span>
+<label><input type="radio" name="printOrient2" value="landscape" checked> แนวนอน</label>
+<label><input type="radio" name="printOrient2" value="portrait"> แนวตั้ง</label>
+</div>
+<div class="timetable-wrapper"><table class="timetable" id="teacherViewGrid"></table></div>
+</div>
+</div>
+
+<!-- ── LEAVE SUBMIT ── -->
+<div class="page-section" id="section-leave-submit">
+<div class="content-card" style="max-width:700px">
+<div class="card-header-custom"><h3><i class="fas fa-file-alt text-primary"></i>ส่งใบลา</h3></div>
+<form id="leaveForm" onsubmit="return false;">
+<div class="row g-3">
+<div class="col-md-6"><label class="form-label">วันที่ลา <span class="text-danger">*</span></label>
+<div class="tdp-wrap"><input type="text" id="leaveDateDisplay" class="form-control" readonly placeholder="เลือกวันที่" style="cursor:pointer"><input type="hidden" id="leaveDate"><i class="fas fa-calendar-alt tdp-icon"></i><div class="tdp-popup" id="leaveDatePopup"></div></div></div>
+<div class="col-md-6"><label class="form-label">ประเภทการลา</label><select id="leaveType" class="form-select"><option>ลาป่วย</option><option>ลากิจ</option><option>ลาพักผ่อน</option><option>ไปราชการ</option><option>อื่นๆ</option></select></div>
+<div class="col-12"><label class="form-label">คาบที่ลา <span class="text-danger">*</span></label>
+<div class="d-flex align-items-center gap-2 mb-2"><label class="btn btn-outline btn-sm"><input type="checkbox" id="leaveSelectAll" onchange="_toggleAllLeavePeriods(this.checked)" style="margin-right:4px">เลือกทั้งหมด</label></div>
+<div id="leavePeriodCheckboxes"></div>
+</div>
+<div class="col-12"><label class="form-label">เหตุผล</label><textarea id="leaveReason" class="form-control" rows="3" placeholder="ระบุเหตุผลการลา..."></textarea></div>
+<div class="col-12"><label class="form-label"><i class="fas fa-paperclip me-1"></i>แนบไฟล์ (PDF, รูปภาพ, Word)</label>
+<div id="leaveFileArea" class="file-area mb-2"></div>
+<div class="dropzone" id="leaveDropzone" onclick="document.getElementById('leaveFileInput').click()" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleLeaveDrop(event)"><i class="fas fa-cloud-upload-alt"></i><p>ลากไฟล์มาวาง หรือ <span class="text-primary">คลิกเลือก</span></p></div>
+<input type="file" id="leaveFileInput" style="display:none" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onchange="handleLeaveFileSelect(this)">
+</div>
+<div class="col-12"><div id="leaveUploadProgress" style="display:none"><div class="upload-progress"><div class="progress-bar" id="leaveProgressBar" style="width:0%"></div></div><div class="upload-summary" id="leaveProgressText">กำลังอัปโหลด...</div></div></div>
+<div class="col-12"><button class="btn btn-primary w-100" onclick="doSubmitLeave()"><i class="fas fa-paper-plane me-1"></i>ส่งใบลา</button></div>
+</div>
+</form>
+</div>
+</div>
+
+<!-- ── LEAVE APPROVE ── -->
+<div class="page-section" id="section-leave-approve">
+<div class="content-card">
+<div class="card-header-custom"><h3><i class="fas fa-clipboard-check text-warning"></i>อนุมัติ/ปฏิเสธใบลา</h3><button class="btn btn-outline btn-sm" onclick="loadPendingLeaves()"><i class="fas fa-sync-alt"></i> รีเฟรช</button></div>
+<div class="table-container"><table id="pendingLeavesTable" class="table table-hover"><thead><tr><th>#</th><th>ครู</th><th>วันที่</th><th>ประเภท</th><th>คาบ</th><th>เหตุผล</th><th>ไฟล์</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody></tbody></table></div>
+</div>
+</div>
+
+<!-- ── LEAVE HISTORY ── -->
+<div class="page-section" id="section-leave-history">
+<div class="content-card">
+<div class="card-header-custom"><h3><i class="fas fa-history text-info"></i>ประวัติการลา</h3></div>
+<div class="table-container"><table id="leaveHistoryTable" class="table table-hover"><thead><tr><th>#</th><th>ครู</th><th>วันที่</th><th>ประเภท</th><th>คาบ</th><th>เหตุผล</th><th>สถานะ</th><th>ผู้อนุมัติ</th><th>วันที่อนุมัติ</th><th>จัดการ</th></tr></thead><tbody></tbody></table></div>
+</div>
+</div>
+
+<!-- ── SUBSTITUTE ASSIGNMENT ── -->
+<div class="page-section" id="section-substitute">
+<div class="content-card">
+<div class="card-header-custom"><h3><i class="fas fa-exchange-alt text-warning"></i>จัดครูสอนแทน</h3><button class="btn btn-outline btn-sm" onclick="loadUnassignedSlots()"><i class="fas fa-sync-alt"></i> รีเฟรช</button></div>
+<div class="table-container"><table id="unassignedTable" class="table table-hover"><thead><tr><th>#</th><th>ครู(ลา)</th><th>วันที่</th><th>คาบ</th><th>ชั้น</th><th>วิชา</th><th>จัดการ</th></tr></thead><tbody></tbody></table></div>
+</div>
+</div>
+
+<!-- ── SUBSTITUTE HISTORY ── -->
+<div class="page-section" id="section-substitute-history">
+<div class="content-card">
+<div class="card-header-custom"><h3><i class="fas fa-list-alt text-info"></i>ประวัติสอนแทน</h3><div class="d-flex gap-2 no-print"><button class="btn btn-outline btn-sm" onclick="printSubstituteHistory()"><i class="fas fa-print"></i> พิมพ์</button><button class="btn btn-outline btn-sm" onclick="downloadSubstituteHistoryCsv()"><i class="fas fa-download"></i> ดาวน์โหลด CSV</button></div></div>
+<div class="table-container"><table id="substituteHistoryTable" class="table table-hover"><thead><tr><th>#</th><th>วันที่</th><th>คาบ</th><th>ชั้น</th><th>วิชา</th><th>ครู(ลา)</th><th>ครู(แทน)</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody></tbody></table></div>
+</div>
+</div>
+
+<!-- ── SUBSTITUTE ASSIGNMENT DOCUMENT ── -->
+<div class="page-section" id="section-substitute-assignment-doc">
+<div class="content-card">
+<div class="card-header-custom"><h3><i class="fas fa-file-alt text-primary"></i>ใบมอบหมายงานสอนแทน</h3></div>
+<div class="d-flex gap-2 align-items-end flex-wrap mb-3 no-print">
+<div><label for="substituteDocDate" class="form-label mb-1">เลือกวันที่ลา</label><input type="date" id="substituteDocDate" class="form-control" style="width:auto" onchange="clearSubstituteAssignmentDocumentPreview()"></div>
+<button class="btn btn-primary" onclick="loadSubstituteAssignmentDocument()"><i class="fas fa-search me-1"></i>แสดงเอกสาร</button>
+<button class="btn btn-outline" id="substituteDocPrintBtn" onclick="printSubstituteAssignmentDocument()" disabled><i class="fas fa-print me-1"></i>พิมพ์ / บันทึก PDF</button>
+<button class="btn btn-outline" id="substituteDocDownloadBtn" onclick="downloadSubstituteAssignmentDocument()" disabled><i class="fas fa-download me-1"></i>ดาวน์โหลดเอกสาร</button>
+</div>
+<div id="substituteDocMessage" class="text-muted mb-2 no-print">เลือกวันที่ลาแล้วกด “แสดงเอกสาร”</div>
+<iframe id="substituteAssignmentDocumentPreview" title="ตัวอย่างใบมอบหมายงานสอนแทน" style="width:100%;height:75vh;border:1px solid #e2e8f0;border-radius:8px;background:#fff" hidden></iframe>
+</div>
+</div>
+
+<!-- ── MANAGE TEACHERS ── -->
+<div class="page-section" id="section-manage-teachers">
+<div class="content-card">
+<div class="card-header-custom"><h3><i class="fas fa-users-cog text-primary"></i>จัดการข้อมูลครู</h3>
+<div class="d-flex gap-2 flex-wrap"><button class="btn btn-primary btn-sm" onclick="showTeacherForm('add')"><i class="fas fa-plus"></i> เพิ่มครู</button><button class="btn btn-success btn-sm" onclick="showImportModal('teachers')"><i class="fas fa-file-upload"></i> Import</button><button class="btn btn-outline btn-sm" onclick="downloadTemplate('teachers')"><i class="fas fa-download"></i> Template</button><button class="btn btn-outline btn-sm" onclick="exportData('teachers')"><i class="fas fa-file-excel"></i> Export</button></div></div>
+<div class="table-container"><table id="teachersTable" class="table table-hover"><thead><tr><th>#</th><th>รหัส</th><th>ชื่อผู้ใช้</th><th>ชื่อ-สกุล</th><th>กลุ่มสาระ</th><th>สถานะ</th><th>สิทธิ์</th><th>จัดการ</th></tr></thead><tbody></tbody></table></div>
+</div>
+</div>
+
+<!-- ── MANAGE SUBJECTS ── -->
+<div class="page-section" id="section-manage-subjects">
+<div class="content-card">
+<div class="card-header-custom"><h3><i class="fas fa-book text-success"></i>จัดการรายวิชา</h3>
+<div class="d-flex gap-2 flex-wrap"><button class="btn btn-primary btn-sm" onclick="showSubjectForm('add')"><i class="fas fa-plus"></i> เพิ่มวิชา</button><button class="btn btn-success btn-sm" onclick="showImportModal('subjects')"><i class="fas fa-file-upload"></i> Import</button><button class="btn btn-outline btn-sm" onclick="downloadTemplate('subjects')"><i class="fas fa-download"></i> Template</button><button class="btn btn-outline btn-sm" onclick="exportData('subjects')"><i class="fas fa-file-excel"></i> Export</button></div></div>
+<div class="table-container"><table id="subjectsTable" class="table table-hover"><thead><tr><th>#</th><th>รหัส</th><th>ชื่อวิชา</th><th>ประเภท</th><th>ชั้น/ห้อง</th><th>คาบ/สัปดาห์</th><th>จัดการ</th></tr></thead><tbody></tbody></table></div>
+</div>
+</div>
+
+<!-- ── MANAGE CLASSROOMS ── -->
+<div class="page-section" id="section-manage-classrooms">
+<div class="content-card">
+<div class="card-header-custom"><h3><i class="fas fa-school text-info"></i>จัดการชั้นเรียน</h3>
+<div class="d-flex gap-2 flex-wrap"><button class="btn btn-primary btn-sm" onclick="showClassroomForm('add')"><i class="fas fa-plus"></i> เพิ่มชั้น</button><button class="btn btn-success btn-sm" onclick="showImportModal('classrooms')"><i class="fas fa-file-upload"></i> Import</button><button class="btn btn-outline btn-sm" onclick="downloadTemplate('classrooms')"><i class="fas fa-download"></i> Template</button><button class="btn btn-outline btn-sm" onclick="exportData('classrooms')"><i class="fas fa-file-excel"></i> Export</button></div></div>
+<div class="table-container"><table id="classroomsTable" class="table table-hover"><thead><tr><th>#</th><th>ระดับชั้น</th><th>ห้อง</th><th>ชื่อชั้น</th><th>ครูประจำชั้น</th><th>นักเรียน</th><th>จัดการ</th></tr></thead><tbody></tbody></table></div>
+</div>
+</div>
+
+<!-- ── MANAGE PERIODS ── -->
+<div class="page-section" id="section-manage-periods">
+<div class="content-card">
+<div class="card-header-custom"><h3><i class="fas fa-clock text-info"></i>กำหนดคาบเรียน</h3><button class="btn btn-primary btn-sm" onclick="showPeriodForm('add')"><i class="fas fa-plus"></i> เพิ่มคาบ</button></div>
+<div class="table-container"><table id="periodsTable" class="table table-hover"><thead><tr><th>ลำดับ</th><th>ชื่อคาบ</th><th>เวลา</th><th>ประเภท</th><th>ระยะเวลา</th><th>จัดการ</th></tr></thead><tbody></tbody></table></div>
+</div>
+</div>
+
+<!-- ── SETTINGS ── -->
+<div class="page-section" id="section-settings">
+<div class="content-card" style="max-width:700px">
+<div class="card-header-custom"><h3><i class="fas fa-cog text-primary"></i>ตั้งค่าระบบ</h3></div>
+<form id="settingsForm" onsubmit="return false;">
+<div class="mb-3"><label class="form-label">ชื่อโรงเรียน</label><input type="text" id="setSchoolName" class="form-control"></div>
+<div class="mb-3"><label class="form-label">ปีการศึกษา</label><input type="text" id="setAcademicYear" class="form-control"></div>
+<div class="mb-3"><label class="form-label">ภาคเรียน</label><select id="setSemester" class="form-select"><option value="1">1</option><option value="2">2</option></select></div>
+<div class="mb-3"><label class="form-label">ชื่อผู้อำนวยการ</label><input type="text" id="setDirectorName" class="form-control"></div>
+<div class="mb-3"><label class="form-label">ชื่อหัวหน้าฝ่ายวิชาการ</label><input type="text" id="setAcademicHead" class="form-control"></div>
+<hr>
+<div class="mb-3"><label class="form-label">Telegram Bot Token</label><input type="text" id="setTelegramToken" class="form-control"></div>
+<div class="mb-3"><label class="form-label">Telegram Admin Chat ID</label><input type="text" id="setTelegramChatId" class="form-control"></div>
+<hr>
+<div class="mb-3 d-flex align-items-center justify-content-between">
+<div><label class="form-label mb-0"><i class="fas fa-clipboard-list me-1"></i>เก็บ Log กิจกรรม</label><div class="text-muted" style="font-size:.75rem">บันทึกการดำเนินการต่างๆ ลงในชีท Logs</div></div>
+<div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="setEnableLogs" style="width:3em;height:1.5em;cursor:pointer"></div>
+</div>
+<button class="btn btn-primary w-100" onclick="doSaveSettings()"><i class="fas fa-save me-1"></i>บันทึกตั้งค่า</button>
+</form>
+</div>
+</div>
+
+<!-- ── PROFILE ── -->
+<div class="page-section" id="section-profile">
+<div class="content-card" style="max-width:600px">
+<div class="profile-header"><div class="profile-avatar" id="profileAvatar">U</div><h4 id="profileName">ชื่อผู้ใช้</h4><div class="profile-status badge-status badge-active" id="profileStatus">ครู</div></div>
+<form id="profileForm" onsubmit="return false;">
+<div class="row g-3">
+<div class="col-md-6"><label class="form-label">เบอร์โทร</label><input type="text" id="profPhone" class="form-control"></div>
+<div class="col-md-6"><label class="form-label">อีเมล</label><input type="email" id="profEmail" class="form-control"></div>
+<div class="col-12"><label class="form-label">Telegram Chat ID</label><input type="text" id="profTelegram" class="form-control"></div>
+<div class="col-12"><button class="btn btn-primary w-100" onclick="doSaveProfile()"><i class="fas fa-save me-1"></i>บันทึก</button></div>
+</form>
+<hr class="my-4">
+<h5><i class="fas fa-key me-1"></i>เปลี่ยนรหัสผ่าน</h5>
+<div class="row g-3 mt-1">
+<div class="col-12"><input type="password" id="profOldPw" class="form-control" placeholder="รหัสผ่านเดิม"></div>
+<div class="col-md-6"><input type="password" id="profNewPw" class="form-control" placeholder="PIN ใหม่ 6 หลัก" oninput="if(this.dataset.pinMode==='true'){this.value=this.value.replace(/\D/g,'').slice(0,6)}"></div>
+<div class="col-md-6"><input type="password" id="profConfirmPw" class="form-control" placeholder="ยืนยัน PIN 6 หลัก" oninput="if(this.dataset.pinMode==='true'){this.value=this.value.replace(/\D/g,'').slice(0,6)}"></div>
+<div class="col-12"><button class="btn btn-warning w-100" onclick="doChangePassword()"><i class="fas fa-key me-1"></i>เปลี่ยนรหัสผ่าน</button></div>
+</div>
+</div>
+</div>
+
+</main>
+
+</div><!-- /appShell -->
+
+<div id="modalsRoot"></div>
+
+<!-- SCRIPTS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap5.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+<!-- GitHub Pages configuration: กำหนด URL ของ Google Apps Script Web App -->
+<script>
+  window.APP_CONFIG = window.APP_CONFIG || {};
+  window.APP_CONFIG.GAS_WEB_APP_URL =
+    "https://script.google.com/macros/s/AKfycbyfGOEoaD8APg8ADpcce8rxnCKwIjENkGN3uPWhMqnQSdPQXgPy0tdx9mM4YjAsASQH/exec";
+</script>
+
+<!-- GitHub Pages ไม่รองรับคำสั่ง include() ของ Apps Script
+     จึงโหลด modals และไฟล์สคริปต์จากไฟล์ใน repository โดยตรง -->
+<script>
+(async function loadKrusb75Frontend() {
+  // รอให้ HTML หลัก parse เสร็จก่อน แล้วค่อยโหลดไฟล์ที่แยกไว้
+  if (document.readyState === "loading") {
+    await new Promise(resolve =>
+      document.addEventListener("DOMContentLoaded", resolve, { once: true })
+    );
+  }
+
+  const showLoadError = (message) => {
+    console.error("[KRUSB75]", message);
+    const target = document.getElementById("loadingText");
+    if (target) target.textContent = message;
+  };
+
+  try {
+    // 1) โหลดส่วน Modal เข้ามาในหน้าเว็บ
+    const modalResponse = await fetch("./modals.html", { cache: "no-cache" });
+    if (!modalResponse.ok) {
+      throw new Error("โหลด modals.html ไม่สำเร็จ (" + modalResponse.status + ")");
+    }
+    const modalHtml = await modalResponse.text();
+    document.getElementById("modalsRoot").innerHTML = modalHtml;
+
+    // 2) โหลดสคริปต์ตามลำดับ เพื่อให้ฟังก์ชันหลักพร้อมก่อนโมดูลอื่น
+    const scriptFiles = [
+      "./script-core.html",
+      "./script-schedule.html",
+      "./script-leave.html",
+      "./script-upload.html",
+      "./script-admin.html"
+    ];
+
+    for (const file of scriptFiles) {
+      const response = await fetch(file, { cache: "no-cache" });
+      if (!response.ok) {
+        throw new Error("โหลด " + file + " ไม่สำเร็จ (" + response.status + ")");
+      }
+
+      const source = await response.text();
+      const parsed = new DOMParser().parseFromString(source, "text/html");
+      const scriptNodes = Array.from(parsed.querySelectorAll("script"));
+
+      // รองรับไฟล์ที่เป็น <script>...</script> และไฟล์ JavaScript ล้วน
+      if (scriptNodes.length) {
+        for (const oldScript of scriptNodes) {
+          const newScript = document.createElement("script");
+          if (oldScript.src) {
+            newScript.src = oldScript.src;
+            await new Promise((resolve, reject) => {
+              newScript.onload = resolve;
+              newScript.onerror = () => reject(
+                new Error("โหลดสคริปต์ย่อยไม่สำเร็จ: " + oldScript.src)
+              );
+              document.body.appendChild(newScript);
+            });
+          } else {
+            newScript.textContent = oldScript.textContent;
+            document.body.appendChild(newScript);
+          }
+        }
+      } else {
+        const newScript = document.createElement("script");
+        newScript.textContent = source;
+        document.body.appendChild(newScript);
+      }
+    }
+
+    // 3) สคริปต์เดิมผูก initApp ไว้กับ DOMContentLoaded
+    //    แต่เราโหลดสคริปต์หลัง DOMContentLoaded แล้ว จึงเรียกเริ่มระบบเอง
+    if (typeof window.initApp === "function") {
+      window.initApp();
+    } else {
+      console.warn("[KRUSB75] ไม่พบ initApp(); ตรวจสอบ script-core.html");
+    }
+  } catch (error) {
+    showLoadError("โหลดระบบไม่สำเร็จ: " + error.message);
+    if (window.Swal) {
+      Swal.fire({
+        icon: "error",
+        title: "โหลดระบบไม่สำเร็จ",
+        text: error.message
+      });
+    } else {
+      alert("โหลดระบบไม่สำเร็จ: " + error.message);
+    }
+  }
+})();
+</script>
+
+</body>
+</html>

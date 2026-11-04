@@ -1,0 +1,694 @@
+<script>
+// ══ KRUSB75 — Timetable Drag & Drop + Views ══
+
+// GitHub Pages: เรียก Google Apps Script ผ่าน fetch() ด้วย apiCall() จาก script-core.html
+
+var DAYS = ['จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์'];
+var _editGrid = {};
+var _allSchedulesCache = [];
+var _busyMap = { teacher: {}, room: {} }; // O(1) conflict lookup
+
+// -- INIT EDIT --
+function initTimetableEdit(){
+  populateClassSelect('ttEditClass');
+  var palette=document.getElementById('subjectPalette');
+  if(palette) palette.style.display='none';
+  renderEditGrid();
+  _refreshScheduleCache();
+}
+
+function _refreshScheduleCache(){
+  apiCall("getSchedulesData", [APP.token]).then(function(r){
+    _allSchedulesCache = (r.data || []);
+    var cn = document.getElementById('ttEditClass') ? document.getElementById('ttEditClass').value : '';
+    _buildBusyMap(cn);
+    _markConflicts();
+  });
+}
+
+function _buildBusyMap(currentClass){
+  _busyMap = { teacher: {}, room: {} };
+  for (var i = 0; i < _allSchedulesCache.length; i++) {
+    var s = _allSchedulesCache[i];
+    if (s.class_name === currentClass) continue;
+    var tKey = s.day_of_week + '_' + s.period + '_' + s.teacher_id;
+    _busyMap.teacher[tKey] = { class_name: s.class_name, subject: s.subject_name || s.subject_id };
+    if (s.room) {
+      var rKey = s.day_of_week + '_' + s.period + '_' + s.room;
+      _busyMap.room[rKey] = { class_name: s.class_name, subject: s.subject_name || s.subject_id };
+    }
+  }
+}
+
+function populateClassSelect(selectId){
+  var sel=document.getElementById(selectId); if(!sel) return;
+  var html='<option value="">-- เลือกห้อง --</option>';
+  (APP.classrooms||[]).forEach(function(c){
+    html+='<option value="'+_esc(c.class_name)+'">'+_esc(c.class_name)+'</option>';
+  });
+  sel.innerHTML=html;
+}
+
+function populateTeacherSelect(selectId){
+  var sel=document.getElementById(selectId); if(!sel) return;
+  var html='<option value="">-- เลือกครู --</option>';
+  (APP.teachers||[]).forEach(function(t){
+    if(t.status==='active'&&t.teacher_id!=='admin'){
+      html+='<option value="'+t.teacher_id+'">'+(t.prefix||'')+t.first_name+' '+t.last_name+'</option>';
+    }
+  });
+  sel.innerHTML=html;
+}
+
+function renderSubjectPalette(){
+  var el=document.getElementById('paletteItems'); if(!el) return;
+  var cn=document.getElementById('ttEditClass')?document.getElementById('ttEditClass').value:'';
+  var subjects=(APP.subjects||[]).filter(function(s){
+    if(!cn) return true;
+    var cls=s.class_names;
+    if(typeof cls==='string') try{cls=JSON.parse(cls)}catch(e){cls=[];}
+    return Array.isArray(cls)&&cls.indexOf(cn)>=0;
+  });
+  // Count used periods per subject
+  var usedMap={};
+  Object.keys(_editGrid).forEach(function(key){
+    var g=_editGrid[key]; if(g&&g.subject_id) usedMap[g.subject_id]=(usedMap[g.subject_id]||0)+1;
+  });
+  var html='';
+  subjects.forEach(function(s){
+    var total=parseInt(s.total_periods)||1;
+    var used=usedMap[s.subject_id]||0;
+    var remaining=total-used;
+    if(remaining<=0) return;
+    html+='<div class="palette-item" draggable="true" data-subject-id="'+s.subject_id+'" data-subject-name="'+_esc(s.subject_name)+'" data-subject-code="'+_esc(s.subject_code||'')+'" data-total="'+total+'" data-remaining="'+remaining+'"'+
+    ' ondragstart="onPaletteDragStart(event)"><div class="palette-dot"></div><div style="flex:1"><div style="font-weight:500">'+_esc(s.subject_code||s.subject_id)+' <span class="badge-remaining">('+remaining+')</span></div><div class="text-muted" style="font-size:.72rem">'+_esc(s.subject_name)+'</div></div></div>';
+  });
+  if(!html) html='<div class="text-muted small text-center py-3">'+(cn?'จัดครบทุกวิชาแล้ว':'เลือกห้องเรียนก่อน')+'</div>';
+  el.innerHTML=html;
+}
+
+function filterPalette(q){
+  q=(q||'').toLowerCase();
+  document.querySelectorAll('.palette-item').forEach(function(el){
+    var name=(el.dataset.subjectName||'').toLowerCase();
+    var code=(el.dataset.subjectCode||'').toLowerCase();
+    el.style.display=(name.indexOf(q)>=0||code.indexOf(q)>=0)?'':'none';
+  });
+}
+
+// ── RENDER EDIT GRID (Transposed: Days=Rows, Periods=Columns) ──
+function renderEditGrid(){
+  var allPeriods=(APP.periods||[]).sort(function(a,b){ return Number(a.periodNumber)-Number(b.periodNumber); });
+  var grid=document.getElementById('timetableGrid'); if(!grid) return;
+  var html='<thead><tr><th class="day-col">วัน/คาบ</th>';
+  allPeriods.forEach(function(p){
+    var isLunch=p.periodType==='พักเที่ยง';
+    html+='<th class="'+(isLunch?'lunch-header':'')+'">'+_esc(p.periodName)+'<span class="period-time">'+_esc(p.periodTime||'')+'</span></th>';
+  });
+  html+='</tr></thead><tbody>';
+  DAYS.forEach(function(d){
+    html+='<tr><td class="day-header">'+d+'</td>';
+    allPeriods.forEach(function(p){
+      var isLunch=p.periodType==='พักเที่ยง';
+      var cellId='cell_'+d+'_'+p.periodNumber;
+      if(isLunch){
+        html+='<td class="lunch-cell"><i class="fas fa-utensils"></i></td>';
+      } else {
+        html+='<td><div class="schedule-cell" id="'+cellId+'" data-day="'+d+'" data-period="'+p.periodNumber+'"'+
+        ' ondragover="onCellDragOver(event)" ondragleave="onCellDragLeave(event)" ondrop="onCellDrop(event)"'+
+        ' onclick="onCellClick(this)"></div></td>';
+      }
+    });
+    html+='</tr>';
+  });
+  html+='</tbody>';
+  grid.innerHTML=html;
+}
+
+function loadTimetableForEdit(){
+  var cn=document.getElementById('ttEditClass').value;
+  var palette=document.getElementById('subjectPalette');
+  if(!cn){ _editGrid={}; renderEditGrid(); if(palette) palette.style.display='none'; _updateProgressBar(); return; }
+  if(palette) palette.style.display='';
+  showLoading('กำลังโหลดตาราง...');
+  // Refresh cache + rebuild BusyMap for fresh multi-user data
+  _refreshScheduleCache();
+  apiCall("getTimetableByClass", [cn,APP.token]).then(function(r){
+    hideLoading();
+    _editGrid={};
+    renderEditGrid();
+    (r.data||[]).forEach(function(s){
+      var key=s.day_of_week+'_'+s.period;
+      _editGrid[key]=s;
+      var cell=document.getElementById('cell_'+s.day_of_week+'_'+s.period);
+      if(cell) renderChipInCell(cell,s);
+    });
+    renderSubjectPalette();
+    _updateProgressBar();
+    _buildBusyMap(cn);
+    _markConflicts();
+  }).catch(function(e){ hideLoading(); Swal.fire('ผิดพลาด',e.message,'error'); });
+}
+
+function renderChipInCell(cell,s){
+  var connClass=s._conn?' '+s._conn:'';
+  var roomHtml=s.room?'<span class="chip-room">'+_esc(s.room)+'</span>':'';
+  var conflictClass=s._conflict?' conflict-indicator':'';
+  var conflictTip=s._conflictMsg?' title="'+_esc(s._conflictMsg)+'"':'';
+  cell.innerHTML='<div class="subject-chip'+connClass+conflictClass+'" draggable="true" ondragstart="onChipDragStart(event)" data-day="'+cell.dataset.day+'" data-period="'+cell.dataset.period+'"'+conflictTip+'>'+
+    '<span class="chip-name">'+_esc(s.subject_code||s.subject_name||s.subject_id)+'</span>'+
+    '<span class="chip-teacher">'+_esc(s.teacher_name||s.teacher_id)+'</span>'+
+    roomHtml+
+    (s._conflict?'<span class="chip-conflict-badge"><i class="fas fa-exclamation-triangle"></i></span>':'')+
+    '<div class="chip-remove" onclick="event.stopPropagation();removeChip(this.closest(\'.schedule-cell\'))"><i class="fas fa-times"></i></div></div>';
+}
+
+// ── DRAG & DROP ──
+var _dragData=null;
+function onPaletteDragStart(e){
+  _dragData={type:'palette',subject_id:e.target.dataset.subjectId,subject_name:e.target.dataset.subjectName,subject_code:e.target.dataset.subjectCode};
+  e.dataTransfer.effectAllowed='copy';
+}
+function onChipDragStart(e){
+  var day=e.target.dataset.day, period=e.target.dataset.period;
+  var key=day+'_'+period;
+  _dragData={type:'move',from_key:key,data:_editGrid[key]};
+  e.dataTransfer.effectAllowed='move';
+}
+function onCellDragOver(e){ e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
+function onCellDragLeave(e){ e.currentTarget.classList.remove('drag-over'); }
+function onCellDrop(e){
+  e.preventDefault(); e.currentTarget.classList.remove('drag-over');
+  if(!_dragData) return;
+  var cell=e.currentTarget;
+  var day=cell.dataset.day, period=cell.dataset.period;
+  var key=day+'_'+period;
+
+  if(_dragData.type==='palette'){
+    // ต้องเลือกครู
+    promptTeacherForCell(cell,_dragData);
+  } else if(_dragData.type==='move'){
+    // ย้าย chip (+ swap ถ้าปลายทางมี chip)
+    var oldKey=_dragData.from_key;
+    if(oldKey===key){ _dragData=null; return; } // drop ที่เดิม — ไม่ทำอะไร
+    var parts=oldKey.split('_');
+    var oldCellEl=document.getElementById('cell_'+parts[0]+'_'+parts[1]);
+    var existingData=_editGrid[key]||null;
+
+    // ลบ chip ต้นทาง
+    if(oldCellEl) oldCellEl.innerHTML='';
+    delete _editGrid[oldKey];
+
+    // วาง chip ปลายทาง
+    _editGrid[key]=Object.assign({},_dragData.data,{day_of_week:day,period:period,_conn:''});
+    renderChipInCell(cell,_editGrid[key]);
+
+    // SWAP: ถ้ามี chip เดิม → สลับกลับไปที่ต้นทาง
+    if(existingData && oldCellEl){
+      _editGrid[oldKey]=Object.assign({},existingData,{day_of_week:parts[0],period:parts[1],_conn:''});
+      renderChipInCell(oldCellEl,_editGrid[oldKey]);
+    }
+
+    renderSubjectPalette();
+    _updateProgressBar();
+    _markConflicts();
+  }
+  _dragData=null;
+}
+
+function onCellClick(cell){
+  if(cell.querySelector('.subject-chip')) return; // มี chip แล้ว
+  // แสดง quick-add dialog
+}
+
+function promptTeacherForCell(cell,dragData){
+  var teachers=APP.teachers||[];
+  var activeTeachers=teachers.filter(function(t){return t.status==='active'&&t.teacher_id!=='admin';});
+  var opts=activeTeachers.map(function(t){
+    var roomHint=t.teaching_room?' ('+t.teaching_room+')':'';
+    return '<option value="'+t.teacher_id+'">'+(t.prefix||'')+t.first_name+' '+t.last_name+roomHint+'</option>';
+  }).join('');
+  // Calculate remaining periods for this subject
+  var subj=(APP.subjects||[]).find(function(s){return s.subject_id===dragData.subject_id;});
+  var total=subj?parseInt(subj.total_periods)||1:1;
+  var usedCount=0;
+  Object.keys(_editGrid).forEach(function(k){if(_editGrid[k]&&_editGrid[k].subject_id===dragData.subject_id) usedCount++;});
+  var remaining=Math.max(1,total-usedCount);
+  // Count available consecutive cells from drop point
+  var allPeriods=(APP.periods||[]).filter(function(p){return p.periodType==='เรียน';}).sort(function(a,b){return Number(a.periodNumber)-Number(b.periodNumber);});
+  var startIdx=-1;
+  for(var i=0;i<allPeriods.length;i++){if(String(allPeriods[i].periodNumber)===String(cell.dataset.period)){startIdx=i;break;}}
+  var maxConsecutive=0;
+  if(startIdx>=0){
+    for(var j=startIdx;j<allPeriods.length;j++){
+      var ck='cell_'+cell.dataset.day+'_'+allPeriods[j].periodNumber;
+      var existCell=document.getElementById(ck);
+      if(!existCell||_editGrid[cell.dataset.day+'_'+allPeriods[j].periodNumber]) break;
+      maxConsecutive++;
+    }
+  }
+  var maxDrop=Math.min(remaining,maxConsecutive||1);
+  var periodOpts='';
+  for(var p=1;p<=maxDrop;p++){
+    periodOpts+='<option value="'+p+'">'+p+' คาบ'+(p>1?' (ต่อเนื่อง)':'')+'</option>';
+  }
+  var defaultRoom=subj?subj.room||'':'';
+  Swal.fire({
+    title:_esc(dragData.subject_code||'')+' '+_esc(dragData.subject_name||''),
+    html:'<div class="mb-3"><label class="form-label">ครูผู้สอน</label><select id="swalTeacher" class="form-select" onchange="_onSwalTeacherChange()">'+opts+'</select></div>'+
+         '<div class="mb-3"><label class="form-label">ห้องสอน</label><input type="text" id="swalRoom" class="form-control" value="'+_esc(defaultRoom)+'" placeholder="เช่น 101, Lab1"><div id="swalRoomHint" class="form-text text-muted"></div></div>'+
+         '<div><label class="form-label">จำนวนคาบ</label><select id="swalPeriodCount" class="form-select">'+periodOpts+'</select></div>',
+    showCancelButton:true,confirmButtonText:'ตกลง',cancelButtonText:'ยกเลิก',
+    didOpen:function(){ _onSwalTeacherChange(); }
+  }).then(function(r){
+    if(r.isConfirmed){
+      var tid=document.getElementById('swalTeacher').value;
+      var count=parseInt(document.getElementById('swalPeriodCount').value)||1;
+      var room=document.getElementById('swalRoom').value.trim();
+      var tName=''; teachers.forEach(function(t){ if(t.teacher_id===tid) tName=(t.prefix||'')+t.first_name+' '+t.last_name; });
+      // Place consecutive periods
+      var placed=0;
+      for(var i=startIdx;i<allPeriods.length&&placed<count;i++){
+        var pNum=allPeriods[i].periodNumber;
+        var key=cell.dataset.day+'_'+pNum;
+        var targetCell=document.getElementById('cell_'+cell.dataset.day+'_'+pNum);
+        if(!targetCell||_editGrid[key]) break;
+        var connClass=count>1?(placed===0?'multi-start':(placed===count-1?'multi-end':'multi-mid')):'';
+        _editGrid[key]={subject_id:dragData.subject_id,subject_code:dragData.subject_code,subject_name:dragData.subject_name,teacher_id:tid,teacher_name:tName,room:room,day_of_week:cell.dataset.day,period:String(pNum),_conn:connClass};
+        renderChipInCell(targetCell,_editGrid[key]);
+        placed++;
+      }
+      renderSubjectPalette();
+      _updateProgressBar();
+      _markConflicts();
+    }
+  });
+}
+
+function removeChip(cell){
+  var key=cell.dataset.day+'_'+cell.dataset.period;
+  delete _editGrid[key];
+  cell.innerHTML='';
+  renderSubjectPalette();
+  _updateProgressBar();
+  _markConflicts();
+}
+
+// Hybrid auto-fill: Teacher.teaching_room > Subject.room > empty
+function _onSwalTeacherChange(){
+  var tid=document.getElementById('swalTeacher').value;
+  var roomInput=document.getElementById('swalRoom');
+  var hint=document.getElementById('swalRoomHint');
+  if(!roomInput||!hint) return;
+  var t=(APP.teachers||[]).find(function(t){return t.teacher_id===tid;});
+  if(t&&t.teaching_room){
+    roomInput.value=t.teaching_room;
+    hint.innerHTML='<i class="fas fa-info-circle"></i> ห้องสอนประจำของครู: '+_esc(t.teaching_room);
+  } else {
+    hint.innerHTML='';
+  }
+}
+
+// Progress Bar
+function _updateProgressBar(){
+  var el=document.getElementById('scheduleProgress');
+  if(!el) return;
+  var cn=document.getElementById('ttEditClass')?document.getElementById('ttEditClass').value:'';
+  if(!cn){ el.style.display='none'; return; }
+  var totalSlots=(APP.periods||[]).filter(function(p){return p.periodType==='เรียน';}).length * 5;
+  var filled=Object.keys(_editGrid).filter(function(k){return _editGrid[k]&&_editGrid[k].subject_id;}).length;
+  var pct=totalSlots>0?Math.round(filled/totalSlots*100):0;
+  el.style.display='block';
+  el.innerHTML='<div class="progress-info"><span>จัดแล้ว '+filled+'/'+totalSlots+' คาบ ('+pct+'%)</span></div>'+
+    '<div class="progress-track"><div class="progress-fill" style="width:'+pct+'%"></div></div>';
+}
+
+// Client-side Conflict Detection — BusyMap O(1)
+function _checkLocalConflict(teacherId, room, day, period) {
+  var msgs = [];
+  var tName = '';
+  (APP.teachers || []).forEach(function(t) { if (t.teacher_id === teacherId) tName = (t.prefix || '') + t.first_name + ' ' + t.last_name; });
+
+  // O(1) Teacher check
+  var tKey = day + '_' + period + '_' + teacherId;
+  if (_busyMap.teacher[tKey]) {
+    msgs.push((tName || teacherId) + ' สอน ' + _busyMap.teacher[tKey].class_name + ' อยู่แล้ว');
+  }
+
+  // O(1) Room check
+  if (room) {
+    var rKey = day + '_' + period + '_' + room;
+    if (_busyMap.room[rKey]) {
+      msgs.push('ห้อง ' + room + ' ถูกใช้โดย ' + _busyMap.room[rKey].class_name);
+    }
+  }
+
+  return msgs;
+}
+
+function _markConflicts() {
+  var cn = document.getElementById('ttEditClass') ? document.getElementById('ttEditClass').value : '';
+  if (!cn) return;
+
+  Object.keys(_editGrid).forEach(function(key) {
+    var g = _editGrid[key];
+    if (!g || !g.subject_id) return;
+    var msgs = _checkLocalConflict(g.teacher_id, g.room, g.day_of_week, g.period);
+    g._conflict = msgs.length > 0;
+    g._conflictMsg = msgs.join(', ');
+    var cell = document.getElementById('cell_' + g.day_of_week + '_' + g.period);
+    if (cell) renderChipInCell(cell, g);
+  });
+}
+
+// ── SAVE TIMETABLE ──
+function saveTimetableFromUI(){
+  var cn=document.getElementById('ttEditClass').value;
+  if(!cn) return Swal.fire('แจ้งเตือน','กรุณาเลือกห้องเรียน','warning');
+  var entries=[];
+  Object.keys(_editGrid).forEach(function(key){
+    var g=_editGrid[key];
+    if(g&&g.subject_id&&g.teacher_id){
+      entries.push({day_of_week:g.day_of_week,period:g.period,subject_id:g.subject_id,teacher_id:g.teacher_id,room:g.room||''});
+    }
+  });
+  Swal.fire({title:'บันทึกตาราง '+cn+'?',text:entries.length+' รายการ',icon:'question',showCancelButton:true,confirmButtonText:'บันทึก',cancelButtonText:'ยกเลิก'}).then(function(r){
+    if(r.isConfirmed){
+      showLoading('กำลังบันทึก...');
+      apiCall("saveTimetable", [{class_name:cn,entries:entries},APP.token]).then(function(r){
+        hideLoading();
+        if(r.success) Swal.fire({icon:'success',title:r.message,timer:2000,showConfirmButton:false});
+        else Swal.fire('ผิดพลาด',r.message,'error');
+      }).catch(function(e){ hideLoading(); Swal.fire('ผิดพลาด',e.message,'error'); });
+    }
+  });
+}
+
+function clearCurrentTimetable(){
+  var cn=document.getElementById('ttEditClass').value;
+  if(!cn) return;
+  Swal.fire({title:'ล้างตาราง '+cn+'?',icon:'warning',showCancelButton:true,confirmButtonColor:'#ef4444',confirmButtonText:'ล้าง',cancelButtonText:'ยกเลิก'}).then(function(r){
+    if(r.isConfirmed){ _editGrid={}; renderEditGrid(); }
+  });
+}
+
+// ── CLASS VIEW ──
+function initClassView(){ populateClassSelect('ttViewClass'); }
+function loadClassTimetableView(){
+  var cn=document.getElementById('ttViewClass').value;
+  if(!cn) return;
+  showLoading();
+  apiCall("getTimetableByClass", [cn,APP.token]).then(function(r){
+    hideLoading(); renderReadonlyGrid('classViewGrid',r.data||[],'class');
+  });
+}
+
+function initClassPotnView(){
+  var sel=document.getElementById('ttViewClassPotn');
+  if(sel&&sel.value) loadClassPotnTimetableView();
+}
+function loadClassPotnTimetableView(){
+  var cn=document.getElementById('ttViewClassPotn').value;
+  if(!cn) return;
+  showLoading();
+  apiCall("getPotnClassTimetable", [cn,APP.token]).then(function(r){
+    hideLoading();
+    if(!r||!r.success){ Swal.fire('เกิดข้อผิดพลาด',(r&&r.message)||'โหลดตารางเรียนไม่สำเร็จ','error'); return; }
+    renderReadonlyGrid('classPotnViewGrid',r.data||[],'class');
+  }).catch(function(e){ hideLoading(); Swal.fire('เกิดข้อผิดพลาด',e.message||String(e),'error'); });
+}
+function printClassPotnTimetable(){
+  var cn=document.getElementById('ttViewClassPotn').value;
+  if(!cn) return Swal.fire('แจ้งเตือน','กรุณาเลือกห้องเรียนก่อน','warning');
+  var opts=_getPrintOpts('3');
+  showLoading();
+  apiCall("getPotnClassTimetable", [cn,APP.token]).then(function(r){
+    hideLoading();
+    if(!r||!r.success){ Swal.fire('เกิดข้อผิดพลาด',(r&&r.message)||'โหลดตารางเรียนไม่สำเร็จ','error'); return; }
+    _openPrintWindow('class',cn,r.data||[],opts);
+  }).catch(function(e){ hideLoading(); Swal.fire('เกิดข้อผิดพลาด',e.message||String(e),'error'); });
+}
+
+function initClass46View(){
+  var sel=document.getElementById('ttViewClass46');
+  if(sel&&sel.value) loadClass46TimetableView();
+}
+function loadClass46TimetableView(){
+  var cn=document.getElementById('ttViewClass46').value;
+  if(!cn) return;
+  showLoading();
+  apiCall("getPotnClassTimetable", [cn,APP.token]).then(function(r){
+    hideLoading();
+    if(!r||!r.success){ Swal.fire('เกิดข้อผิดพลาด',(r&&r.message)||'โหลดตารางเรียนไม่สำเร็จ','error'); return; }
+    renderReadonlyGrid('class46ViewGrid',r.data||[],'class');
+  }).catch(function(e){ hideLoading(); Swal.fire('เกิดข้อผิดพลาด',e.message||String(e),'error'); });
+}
+function printClass46Timetable(){
+  var cn=document.getElementById('ttViewClass46').value;
+  if(!cn) return Swal.fire('แจ้งเตือน','กรุณาเลือกห้องเรียนก่อน','warning');
+  var opts=_getPrintOpts('4');
+  showLoading();
+  apiCall("getPotnClassTimetable", [cn,APP.token]).then(function(r){
+    hideLoading();
+    if(!r||!r.success){ Swal.fire('เกิดข้อผิดพลาด',(r&&r.message)||'โหลดตารางเรียนไม่สำเร็จ','error'); return; }
+    _openPrintWindow('class',cn,r.data||[],opts);
+  }).catch(function(e){ hideLoading(); Swal.fire('เกิดข้อผิดพลาด',e.message||String(e),'error'); });
+}
+
+// ── TEACHER VIEW ──
+function _isSchedulerRole(){
+  return APP.activeRole&&(APP.activeRole==='Admin'||APP.activeRole==='Scheduler'||APP.activeRole==='Director');
+}
+
+function initTeacherView(){
+  if(_isSchedulerRole()){
+    populateTeacherSelect('ttViewTeacher');
+    document.getElementById('ttViewTeacher').style.display='';
+  } else {
+    document.getElementById('ttViewTeacher').style.display='none';
+    _loadMyTimetable();
+  }
+}
+
+function _loadMyTimetable(){
+  if(!APP.teacherId) return;
+  showLoading();
+  apiCall("getTimetableByTeacher", [APP.teacherId,APP.token]).then(function(r){
+    hideLoading(); renderReadonlyGrid('teacherViewGrid',r.data||[],'teacher');
+  });
+}
+
+function loadTeacherTimetableView(){
+  var tid=document.getElementById('ttViewTeacher').value;
+  if(!tid) return;
+  showLoading();
+  apiCall("getTimetableByTeacher", [tid,APP.token]).then(function(r){
+    hideLoading(); renderReadonlyGrid('teacherViewGrid',r.data||[],'teacher');
+  });
+}
+
+function renderReadonlyGrid(gridId,data,type){
+  type=type||'class';
+  var allPeriods=(APP.periods||[]).sort(function(a,b){ return Number(a.periodNumber)-Number(b.periodNumber); });
+  var grid=document.getElementById(gridId); if(!grid) return;
+  var schedMap={};
+  data.forEach(function(s){
+    var key=s.day_of_week+'_'+s.period;
+    if(!schedMap[key]) schedMap[key]=[];
+    schedMap[key].push(s);
+  });
+  var html='<thead><tr><th class="day-col">วัน/คาบ</th>';
+  allPeriods.forEach(function(p){
+    var isLunch=p.periodType==='พักเที่ยง';
+    html+='<th class="'+(isLunch?'lunch-header':'')+'">'+_esc(p.periodName)+'<span class="period-time">'+_esc(p.periodTime||'')+'</span></th>';
+  });
+  html+='</tr></thead><tbody>';
+  DAYS.forEach(function(d){
+    html+='<tr><td class="day-header">'+d+'</td>';
+    allPeriods.forEach(function(p){
+      var isLunch=p.periodType==='พักเที่ยง';
+      if(isLunch){
+        html+='<td class="lunch-cell"><i class="fas fa-utensils"></i></td>';
+      } else {
+        var slots=schedMap[d+'_'+p.periodNumber]||[];
+        if(slots.length){
+          html+='<td>';
+          slots.forEach(function(s){
+            var line2=type==='teacher'?(s.class_name||''):(s.teacher_name||s.teacher_id||'');
+            html+='<div class="subject-chip" style="cursor:default"><span class="chip-name">'+_esc(s.subject_code||s.subject_name||'')+'</span><span class="chip-teacher">'+_esc(line2)+'</span>'+(s.room?'<span class="chip-room">'+_esc(s.room)+'</span>':'')+'</div>';
+          });
+          html+='</td>';
+        } else { html+='<td></td>'; }
+      }
+    });
+    html+='</tr>';
+  });
+  html+='</tbody>';
+  grid.innerHTML=html;
+}
+
+// ── PRINT TIMETABLE (Popup) ──
+function _getPrintOpts(suffix){
+  var showCode=document.getElementById('printCode'+suffix);
+  var showName=document.getElementById('printName'+suffix);
+  var styleRadio=document.querySelector('input[name="teacherStyle'+suffix+'"]:checked');
+  var orientRadio=document.querySelector('input[name="printOrient'+suffix+'"]:checked');
+  return {
+    showCode: showCode ? showCode.checked : true,
+    showName: showName ? showName.checked : false,
+    teacherFull: styleRadio ? styleRadio.value==='full' : false,
+    orientation: orientRadio ? orientRadio.value : 'landscape'
+  };
+}
+
+function printClassTimetable(){
+  var cn=document.getElementById('ttViewClass').value;
+  if(!cn) return Swal.fire('\u0e41\u0e08\u0e49\u0e07\u0e40\u0e15\u0e37\u0e2d\u0e19','\u0e01\u0e23\u0e38\u0e13\u0e32\u0e40\u0e25\u0e37\u0e2d\u0e01\u0e2b\u0e49\u0e2d\u0e07\u0e40\u0e23\u0e35\u0e22\u0e19\u0e01\u0e48\u0e2d\u0e19','warning');
+  var opts=_getPrintOpts('1');
+  showLoading();
+  apiCall("getTimetableByClass", [cn,APP.token]).then(function(r){
+    hideLoading();
+    _openPrintWindow('class', cn, r.data||[], opts);
+  });
+}
+
+function printTeacherTimetable(){
+  var tid;
+  if(_isSchedulerRole()){
+    tid=document.getElementById('ttViewTeacher').value;
+    if(!tid) return Swal.fire('\u0e41\u0e08\u0e49\u0e07\u0e40\u0e15\u0e37\u0e2d\u0e19','\u0e01\u0e23\u0e38\u0e13\u0e32\u0e40\u0e25\u0e37\u0e2d\u0e01\u0e04\u0e23\u0e39\u0e01\u0e48\u0e2d\u0e19','warning');
+  } else {
+    tid=APP.teacherId;
+  }
+  var tName='';
+  (APP.teachers||[]).forEach(function(t){
+    if(t.teacher_id===tid) tName=(t.prefix||'')+t.first_name+' '+t.last_name;
+  });
+  if(!tName) tName=APP.name||tid;
+  var opts=_getPrintOpts('2');
+  showLoading();
+  apiCall("getTimetableByTeacher", [tid,APP.token]).then(function(r){
+    hideLoading();
+    _openPrintWindow('teacher', tName||tid, r.data||[], opts);
+  });
+}
+
+function _shortenTeacher(fullName){
+  var parts=(fullName||'').split(' ');
+  if(parts.length>=2){
+    var first=parts[0].replace(/^(\u0e19\u0e32\u0e22|\u0e19\u0e32\u0e07|\u0e19\u0e32\u0e07\u0e2a\u0e32\u0e27|\u0e27\u0e48\u0e32\u0e17\u0e35\u0e48\u0e23\u0e49\u0e2d\u0e22\u0e15\u0e23\u0e35)/,'');
+    return '\u0e04\u0e23\u0e39'+first;
+  }
+  return fullName;
+}
+
+function _openPrintWindow(type, label, data, opts){
+  opts=opts||{showCode:true,showName:false,teacherFull:false,orientation:'landscape'};
+  var isPortrait=opts.orientation==='portrait';
+  var s=APP.settings||{};
+  var allPeriods=(APP.periods||[]).sort(function(a,b){ return Number(a.periodNumber)-Number(b.periodNumber); });
+  var schedMap={};
+  data.forEach(function(d){
+    var key=d.day_of_week+'_'+d.period;
+    if(!schedMap[key]) schedMap[key]=[];
+    schedMap[key].push(d);
+  });
+  var filled=data.length;
+
+  var schoolName=s.school_name||'\u0e42\u0e23\u0e07\u0e40\u0e23\u0e35\u0e22\u0e19';
+  var logoUrl=s.school_logo_url||'';
+  var year=s.academic_year||'';
+  var sem=s.semester||'';
+  var headerText=schoolName;
+  var typeLabel=type==='class'?'\u0e15\u0e32\u0e23\u0e32\u0e07\u0e40\u0e23\u0e35\u0e22\u0e19':'\u0e15\u0e32\u0e23\u0e32\u0e07\u0e2a\u0e2d\u0e19';
+  var subLabel=type==='class'?('\u0e0a\u0e31\u0e49\u0e19 '+label):label;
+
+  // Build single header row (period name + time combined)
+  var thCombined='<th class="day-th">\u0e27\u0e31\u0e19/\u0e04\u0e32\u0e1a</th>';
+  allPeriods.forEach(function(p){
+    var isLunch=p.periodType==='\u0e1e\u0e31\u0e01\u0e40\u0e17\u0e35\u0e48\u0e22\u0e07';
+    if(isLunch){
+      thCombined+='<th class="lunch-th">\u0e1e\u0e31\u0e01\u0e40\u0e17\u0e35\u0e48\u0e22\u0e07<br><span class="time-sub">'+_esc(p.periodTime||'')+'</span></th>';
+    } else {
+      thCombined+='<th>'+_esc(p.periodName)+'<br><span class="time-sub">'+_esc(p.periodTime||'')+'</span></th>';
+    }
+  });
+
+  // Body rows
+  var bodyHtml='';
+  DAYS.forEach(function(d){
+    bodyHtml+='<tr><td class="day-td">'+d+'</td>';
+    allPeriods.forEach(function(p){
+      var isLunch=p.periodType==='\u0e1e\u0e31\u0e01\u0e40\u0e17\u0e35\u0e48\u0e22\u0e07';
+      if(isLunch){
+        bodyHtml+='<td class="lunch-td">\u0e1e\u0e31\u0e01<br>\u0e01\u0e25\u0e32\u0e07<br>\u0e27\u0e31\u0e19</td>';
+        return;
+      }
+      var slots=schedMap[d+'_'+p.periodNumber]||[];
+      if(slots.length){
+        bodyHtml+='<td class="subject-td">';
+        slots.forEach(function(sc){
+          var line2Display=type==='teacher'?(sc.class_name||''):(opts.teacherFull?(sc.teacher_name||sc.teacher_id||''):_shortenTeacher(sc.teacher_name||sc.teacher_id||''));
+          var subjectParts=[];
+          if(opts.showCode && (sc.subject_code||sc.subject_id)) subjectParts.push(sc.subject_code||sc.subject_id);
+          if(opts.showName && sc.subject_name) subjectParts.push(sc.subject_name);
+          if(subjectParts.length===0) subjectParts.push(sc.subject_code||sc.subject_name||sc.subject_id||'');
+          bodyHtml+='<div class="sc-item"><div class="sc-code">'+_esc(subjectParts.join(' '))+'</div>';
+          bodyHtml+='<div class="sc-teacher">'+_esc(line2Display)+'</div>';
+          if(sc.room) bodyHtml+='<div class="sc-room">'+_esc(sc.room)+'</div>';
+          bodyHtml+='</div>';
+        });
+        bodyHtml+='</td>';
+      } else {
+        bodyHtml+='<td></td>';
+      }
+    });
+    bodyHtml+='</tr>';
+  });
+
+  var html='<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+_esc(typeLabel)+' - '+_esc(subLabel)+'</title>';
+  html+='<style>';
+  html+='@page{size:A4 '+(isPortrait?'portrait':'landscape')+';margin:'+(isPortrait?'8mm 6mm':'10mm 8mm')+'}';
+  html+='*{margin:0;padding:0;box-sizing:border-box}';
+  html+='body{font-family:"Sarabun","TH Sarabun New",sans-serif;font-size:'+(isPortrait?'12px':'14px')+';color:#333;padding:10px}';
+  html+='.print-header{text-align:center;margin-bottom:12px;position:relative}';
+  html+='.print-logo{width:60px;height:60px;position:absolute;left:20px;top:0}';
+  html+='.print-header h2{font-size:'+(isPortrait?'18px':'20px')+';font-weight:700;margin:0}';
+  html+='.print-header h3{font-size:'+(isPortrait?'14px':'16px')+';font-weight:400;margin:2px 0}';
+  html+='.print-header h4{font-size:'+(isPortrait?'13px':'15px')+';font-weight:400;margin:2px 0}';
+  html+='.print-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:'+(isPortrait?'11px':'13px')+'}';
+  html+='.print-table th,.print-table td{border:1.5px solid #999;padding:'+(isPortrait?'3px 1px':'4px 2px')+';text-align:center;vertical-align:middle}';
+  html+='.print-table thead th{background:#f0f0f0;font-weight:600;font-size:'+(isPortrait?'12px':'14px')+'}';
+  html+='.time-sub{font-size:'+(isPortrait?'9px':'11px')+';font-weight:400;color:#555}';
+  html+='.day-th{width:65px;font-weight:700!important}';
+  html+='.day-td{font-weight:700;font-size:15px;background:#fafafa;width:65px}';
+  html+='.lunch-th,.lunch-td{background:#fff8e1!important;color:#e65100;font-size:12px!important;width:45px;font-weight:600}';
+  html+='.subject-td{font-size:12px;line-height:1.3;padding:3px 2px!important}';
+  html+='.sc-item+.sc-item{border-top:1px solid #bbb;margin-top:3px;padding-top:3px}';
+  html+='.sc-code{font-weight:700;font-size:13px;color:#1a237e}';
+  html+='.sc-teacher{font-size:11px;color:#333}';
+  html+='.sc-room{font-size:11px;color:#666}';
+  html+='@media print{body{padding:0}.print-header{margin-bottom:8px}}';
+  html+='</style></head><body>';
+
+  html+='<div class="print-header">';
+  if(logoUrl) html+='<img src="'+logoUrl+'" class="print-logo" onerror="this.style.display=\'none\'">';
+  html+='<h2>'+_esc(headerText)+'</h2>';
+  html+='<h3>'+_esc(typeLabel)+'\u0e20\u0e32\u0e04\u0e40\u0e23\u0e35\u0e22\u0e19\u0e17\u0e35\u0e48 '+_esc(sem)+' \u0e1b\u0e35\u0e01\u0e32\u0e23\u0e28\u0e36\u0e01\u0e29\u0e32 '+_esc(year)+'</h3>';
+  html+='<h4>'+_esc(subLabel)+' \u0e08\u0e33\u0e19\u0e27\u0e19\u0e04\u0e32\u0e1a '+filled+'</h4>';
+  html+='</div>';
+
+  html+='<table class="print-table"><thead>';
+  html+='<tr>'+thCombined+'</tr>';
+  html+='</thead><tbody>';
+  html+=bodyHtml;
+  html+='</tbody></table>';
+  html+='</body></html>';
+
+  var win=window.open('','_blank','width=1100,height=700');
+  win.document.write(html);
+  win.document.close();
+  setTimeout(function(){ win.print(); },500);
+}
+</script>
+

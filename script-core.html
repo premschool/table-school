@@ -1,0 +1,434 @@
+<script>
+// ══ PTNTIME-SCHOOL — Core JavaScript ══
+var APP = { token:null, role:null, teacherId:null, name:null, settings:{}, teachers:[], subjects:[], periods:[], schedules:[], classrooms:[] };
+
+// ── GOOGLE APPS SCRIPT WEB APP API (GitHub Pages) ──
+// ส่ง POST เป็น text/plain เพื่อหลีกเลี่ยง CORS preflight
+// ฝั่ง Code.gs ต้องมี doPost(e) และ API allowlist ที่รองรับ action เหล่านี้
+var GAS_API_URL = (window.APP_CONFIG && window.APP_CONFIG.GAS_WEB_APP_URL) || 'https://script.google.com/macros/s/AKfycbw4TNmNhGb5vuMXXeGXxJHJzbOXRr-2jFEPAdKAMtiAM8S1u9OcGr7myhZlivs6seC5vQ/exec';
+
+function apiCall(action, args) {
+  if (!GAS_API_URL || GAS_API_URL.indexOf('/exec') === -1) {
+    return Promise.reject(new Error('ยังไม่ได้กำหนด URL ของ Google Apps Script Web App'));
+  }
+
+  var payload = {
+    action: String(action || ''),
+    args: Array.isArray(args) ? args : []
+  };
+
+  return fetch(GAS_API_URL, {
+    method: 'POST',
+    mode: 'cors',
+    redirect: 'follow',
+    headers: {
+      'Content-Type': 'text/plain;charset=utf-8'
+    },
+    body: JSON.stringify(payload)
+  }).then(function(response) {
+    if (!response.ok) {
+      throw new Error('เชื่อมต่อ Google Apps Script ไม่สำเร็จ (HTTP ' + response.status + ')');
+    }
+    return response.text();
+  }).then(function(text) {
+    var result;
+    try {
+      result = JSON.parse(text);
+    } catch (error) {
+      throw new Error('API ส่งข้อมูลกลับมาไม่ใช่ JSON กรุณาตรวจสอบการ Deploy ของ Code.gs');
+    }
+    return result;
+  }).catch(function(error) {
+    console.error('apiCall error [' + action + ']:', error);
+    throw error;
+  });
+}
+function _esc(s){ var d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+function _toBE(s){ if(!s) return '-'; var p=String(s).substring(0,10).split('-'); if(p.length!==3) return s; return p[2]+'/'+p[1]+'/'+(parseInt(p[0])+543); }
+
+// ── INIT ──
+document.addEventListener('DOMContentLoaded', function(){ initApp(); });
+function initApp(){
+  showLoading();
+  // Remember Me: auto-fill saved username
+  var rememberedId = localStorage.getItem('ptntime-school_remember_id');
+  if(rememberedId){
+    document.getElementById('loginId').value = rememberedId;
+    document.getElementById('rememberMe').checked = true;
+  }
+  // Try school name from template injection
+  try { var init = JSON.parse('<?!= initialData ?>'); } catch(e){}
+
+  var saved = sessionStorage.getItem('ptntime-school_token');
+  if(saved){
+    apiCall('checkSession', [saved]).then(function(r){
+      if(r && r.valid){
+        showAppShell();
+        setLoggedIn(saved,r);
+        loadInitialData();
+      } else {
+        sessionStorage.removeItem('ptntime-school_token');
+        hideLoading();
+        showLoginScreen();
+      }
+    }).catch(function(error){
+      console.error('ตรวจสอบ Session ไม่สำเร็จ:', error);
+      hideLoading();
+      showLoginScreen();
+    });
+  } else {
+    hideLoading();
+    showLoginScreen();
+  }
+}
+
+// ── LOADING ──
+function showLoading(t){ document.getElementById('loadingOverlay').classList.remove('hidden'); if(t) document.getElementById('loadingText').textContent=t; }
+function hideLoading(){ document.getElementById('loadingOverlay').classList.add('hidden'); }
+
+// ── TWO-STATE: Login Screen vs App Shell ──
+function showLoginScreen(){
+  document.getElementById('loginScreen').classList.remove('hidden');
+  document.getElementById('appShell').classList.add('app-hidden');
+}
+function showAppShell(){
+  document.getElementById('loginScreen').classList.add('hidden');
+  document.getElementById('appShell').classList.remove('app-hidden');
+}
+
+// ── SIDEBAR ──
+function toggleSidebar(){
+  var sb=document.getElementById('sidebar'),ov=document.getElementById('sidebarOverlay'),nav=document.getElementById('topNavbar'),mc=document.getElementById('mainContent');
+  if(window.innerWidth<=992){ sb.classList.toggle('mobile-open'); ov.classList.toggle('show'); }
+  else{ sb.classList.toggle('collapsed'); nav.classList.toggle('full-width'); mc.classList.toggle('full-width'); }
+}
+
+// ── SPA ROUTING ──
+function showSection(name){
+  document.querySelectorAll('.page-section').forEach(function(s){ s.classList.remove('active'); });
+  var el=document.getElementById('section-'+name); if(el) el.classList.add('active');
+  document.querySelectorAll('.sidebar-nav .nav-item').forEach(function(i){ i.classList.remove('active'); });
+  var ni=document.querySelector('.nav-item[data-section="'+name+'"]'); if(ni) ni.classList.add('active');
+  if(window.innerWidth<=992){ document.getElementById('sidebar').classList.remove('mobile-open'); document.getElementById('sidebarOverlay').classList.remove('show'); }
+  var dd=document.getElementById('userDropdown'); if(dd) dd.classList.remove('show');
+  var titles={'dashboard':'แดชบอร์ด','timetable-edit':'จัดตารางเรียน','timetable-class':'ตารางเรียนรายชั้น','timetable-class-potn':'ตารางเรียนชั้น ม.1-3','timetable-class-46':'ตารางเรียนชั้น ม.4-6','timetable-teacher':'ตารางสอนรายครู','leave-submit':'ส่งใบลา','leave-approve':'อนุมัติใบลา','leave-history':'ประวัติการลา','substitute':'จัดครูสอนแทน','substitute-history':'ประวัติสอนแทน','substitute-assignment-doc':'ใบมอบหมายงานสอนแทน','manage-teachers':'จัดการครู','manage-subjects':'จัดการรายวิชา','manage-classrooms':'จัดการชั้นเรียน','manage-periods':'กำหนดคาบเรียน','settings':'ตั้งค่าระบบ','profile':'ข้อมูลส่วนตัว'};
+  document.getElementById('topPageTitle').textContent=titles[name]||name;
+  if(name==='dashboard') loadDashboard();
+  if(name==='timetable-edit') initTimetableEdit();
+  if(name==='timetable-class') initClassView();
+  if(name==='timetable-class-potn') initClassPotnView();
+  if(name==='timetable-class-46') initClass46View();
+  if(name==='timetable-teacher') initTeacherView();
+  if(name==='leave-submit') initLeaveForm();
+  if(name==='leave-approve') loadPendingLeaves();
+  if(name==='leave-history') loadLeaveHistory();
+  if(name==='substitute') loadUnassignedSlots();
+  if(name==='substitute-history') loadSubstituteHistory();
+  if(name==='substitute-assignment-doc') initSubstituteAssignmentDocument();
+  if(name==='manage-teachers') loadTeachersTable();
+  if(name==='manage-subjects') loadSubjectsTable();
+  if(name==='manage-classrooms') loadClassroomsTable();
+  if(name==='manage-periods') loadPeriodsTable();
+  if(name==='settings') loadSettingsForm();
+  if(name==='profile') loadProfile();
+}
+
+// ── AUTH — LOGIN ──
+function showLoginError(msg){
+  var el=document.getElementById('loginError');
+  document.getElementById('loginErrorText').textContent=msg;
+  el.style.display='block';
+  var card=document.querySelector('.login-card');
+  card.classList.remove('shake');
+  void card.offsetWidth; // force reflow
+  card.classList.add('shake');
+  setTimeout(function(){ card.classList.remove('shake'); },600);
+}
+function hideLoginError(){ document.getElementById('loginError').style.display='none'; }
+
+function doLogin(){
+  hideLoginError();
+  var id=document.getElementById('loginId').value.trim();
+  var pw=document.getElementById('loginPw').value;
+  if(!id||!pw){ showLoginError('กรุณากรอกชื่อผู้ใช้และรหัสผ่านให้ครบ'); return; }
+  showLoading('กำลังเข้าสู่ระบบ...');
+  apiCall('verifyUserLogin', [id, pw]).then(function(r){
+    hideLoading();
+    if(r && r.success){
+      hideLoginError();
+      if(document.getElementById('rememberMe').checked){
+        localStorage.setItem('ptntime-school_remember_id', id);
+      } else {
+        localStorage.removeItem('ptntime-school_remember_id');
+      }
+      sessionStorage.setItem('ptntime-school_token',r.token);
+      showAppShell();
+      setLoggedIn(r.token,r);
+      Swal.fire({icon:'success',title:'เข้าสู่ระบบสำเร็จ!',html:'ยินดีต้อนรับ <b>'+_esc(r.name)+'</b>',timer:2000,showConfirmButton:false});
+      loadInitialData();
+    } else {
+      showLoginError((r && r.message)||'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+    }
+  }).catch(function(e){
+    hideLoading();
+    showLoginError(e.message||'เกิดข้อผิดพลาดในการเชื่อมต่อ กรุณาลองใหม่');
+  });
+}
+
+function setLoggedIn(token,info){
+  APP.token=token; APP.role=info.role; APP.teacherId=info.teacherId; APP.name=info.name;
+  APP.allRoles=(info.role||'Teacher').split(',').map(function(r){return r.trim();});
+  APP.activeRole=APP.allRoles.indexOf('Teacher')>=0?'Teacher':APP.allRoles[0];
+  document.getElementById('guestBtns').classList.add('d-none');
+  var ua=document.getElementById('userArea'); ua.classList.remove('d-none'); ua.classList.add('d-flex');
+  document.getElementById('topUserName').textContent=info.name||info.teacherId;
+  var init=(info.name||'U').charAt(0).toUpperCase();
+  document.getElementById('topAvatar').textContent=init;
+  document.getElementById('sidebarAvatar').textContent=init;
+  document.getElementById('sidebarUserName').textContent=info.name;
+  document.getElementById('sidebarFooter').style.display='block';
+  applyRoleUI();
+}
+
+function _usesTeacherPinForRoles(roles){
+  roles=roles||[];
+  var hasTeacher=roles.indexOf('Teacher')>=0;
+  var hasElevated=roles.indexOf('Admin')>=0||roles.indexOf('Director')>=0||roles.indexOf('Scheduler')>=0;
+  return hasTeacher&&!hasElevated;
+}
+
+function applyRoleUI(){
+  var roleMap={Admin:'ผู้ดูแลระบบ',Director:'ผู้อำนวยการ',Scheduler:'ครูจัดตาราง',Teacher:'ครู'};
+  var activeText=roleMap[APP.activeRole]||APP.activeRole;
+  document.getElementById('topRoleBadge').textContent=activeText;
+  document.getElementById('sidebarUserRole').textContent=activeText;
+  var isAdmin=APP.activeRole==='Admin'||APP.activeRole==='Director';
+  var isScheduler=isAdmin||APP.activeRole==='Scheduler';
+  document.querySelectorAll('.admin-only').forEach(function(el){ el.style.display=isAdmin?'':'none'; });
+  document.querySelectorAll('.scheduler-only').forEach(function(el){ el.style.display=isScheduler?'':'none'; });
+  document.querySelectorAll('.teacher-only').forEach(function(el){ el.style.display=!isScheduler?'':'none'; });
+  var teacherPinMode=_usesTeacherPinForRoles(APP.allRoles);
+  ['profNewPw','profConfirmPw'].forEach(function(id){
+    var input=document.getElementById(id);
+    if(input){input.dataset.pinMode=teacherPinMode?'true':'false';input.inputMode=teacherPinMode?'numeric':'text';input.maxLength=teacherPinMode?6:128;input.placeholder=teacherPinMode?(id==='profNewPw'?'PIN ใหม่ 6 หลัก':'ยืนยัน PIN 6 หลัก'):(id==='profNewPw'?'รหัสผ่านใหม่ อย่างน้อย 10 ตัว':'ยืนยันรหัสผ่านใหม่');}
+  });
+  _renderRoleSwitcher();
+}
+
+function _renderRoleSwitcher(){
+  var roleMap={Admin:'ผู้ดูแลระบบ',Director:'ผู้อำนวยการ',Scheduler:'ครูจัดตาราง',Teacher:'ครู'};
+  var iconMap={Admin:'fas fa-shield-alt',Director:'fas fa-user-tie',Scheduler:'fas fa-calendar-alt',Teacher:'fas fa-chalkboard-teacher'};
+  var sideEl=document.getElementById('sidebarRoleSwitcher');
+  if(sideEl){
+    if(APP.allRoles.length>1){
+      var h='<div class="role-switcher">';
+      APP.allRoles.forEach(function(r){
+        var c=r===APP.activeRole?'role-btn active':'role-btn';
+        h+='<button class="'+c+'" onclick="switchRole(\''+r+'\')" title="'+(roleMap[r]||r)+'"><i class="'+(iconMap[r]||'fas fa-user')+'"></i> '+(roleMap[r]||r)+'</button>';
+      });
+      h+='</div>';
+      sideEl.innerHTML=h; sideEl.style.display='';
+    } else { sideEl.style.display='none'; }
+  }
+  var ddEl=document.getElementById('dropdownRoleSwitcher');
+  if(ddEl){
+    if(APP.allRoles.length>1){
+      var h2='';
+      APP.allRoles.forEach(function(r){
+        var s=r===APP.activeRole?' style="color:var(--primary);font-weight:600"':'';
+        var ck=r===APP.activeRole?' <i class="fas fa-check" style="font-size:.7rem"></i>':'';
+        h2+='<div class="dropdown-item" onclick="switchRole(\''+r+'\')"'+s+'><i class="'+(iconMap[r]||'fas fa-user')+'"></i>'+(roleMap[r]||r)+ck+'</div>';
+      });
+      ddEl.innerHTML=h2; ddEl.style.display='';
+    } else { ddEl.style.display='none'; }
+  }
+}
+
+function switchRole(role){
+  if(APP.allRoles.indexOf(role)<0||role===APP.activeRole) return;
+  APP.activeRole=role;
+  applyRoleUI();
+  showSection('dashboard');
+  var roleMap={Admin:'ผู้ดูแลระบบ',Director:'ผู้อำนวยการ',Scheduler:'ครูจัดตาราง',Teacher:'ครู'};
+  Swal.fire({icon:'info',title:'เปลี่ยนสิทธิ์เป็น',html:'<b>'+(roleMap[role]||role)+'</b>',timer:1500,showConfirmButton:false});
+}
+
+function doLogout(){
+  Swal.fire({title:'ออกจากระบบ?',icon:'question',showCancelButton:true,confirmButtonText:'ออกจากระบบ',cancelButtonText:'ยกเลิก'}).then(function(r){
+    if(r.isConfirmed){
+      apiCall('logout', [APP.token]).catch(function(e){ console.warn('Logout API:', e); });
+      sessionStorage.removeItem('ptntime-school_token');
+      APP.token=null; APP.role=null; APP.teacherId=null;
+      document.getElementById('guestBtns').classList.remove('d-none');
+      var ua=document.getElementById('userArea'); ua.classList.remove('d-flex'); ua.classList.add('d-none');
+      document.getElementById('sidebarFooter').style.display='none';
+      document.querySelectorAll('.admin-only').forEach(function(el){ el.style.display='none'; });
+      document.querySelectorAll('.scheduler-only').forEach(function(el){ el.style.display='none'; });
+      Swal.fire({icon:'success',title:'ออกจากระบบแล้ว',timer:1500,showConfirmButton:false}).then(function(){ showLoginScreen(); });
+    }
+  });
+}
+
+// ── PASSWORD TOGGLE ──
+function togglePasswordVisibility(){
+  var pw=document.getElementById('loginPw');
+  var icon=document.getElementById('pwEyeIcon');
+  if(pw.type==='password'){ pw.type='text'; icon.classList.replace('fa-eye','fa-eye-slash'); }
+  else{ pw.type='password'; icon.classList.replace('fa-eye-slash','fa-eye'); }
+}
+
+function toggleUserDropdown(){ document.getElementById('userDropdown').classList.toggle('show'); }
+document.addEventListener('click',function(e){ var dd=document.getElementById('userDropdown'); if(dd&&!e.target.closest('.user-dropdown')) dd.classList.remove('show'); });
+
+// ── INITIAL DATA (Batch) ──
+function loadInitialData(){
+  showLoading('กำลังโหลดข้อมูล...');
+  apiCall('getInitialData', [APP.token]).then(function(d){
+    if(!d || d.success === false){
+      throw new Error((d && d.message) || 'โหลดข้อมูลเริ่มต้นไม่สำเร็จ');
+    }
+    if(d.settings){ APP.settings=d.settings; document.getElementById('sidebarBrandName').textContent=d.settings.school_name||'PTNTIME-SCHOOL'; }
+    APP.periods=d.periods||[];
+    if(d.teachers) APP.teachers=d.teachers;
+    if(d.subjects) APP.subjects=d.subjects;
+    if(d.classrooms) APP.classrooms=d.classrooms;
+    hideLoading();
+    showSection('dashboard');
+  }).catch(function(e){
+    hideLoading();
+    console.error('โหลด Initial Data ไม่สำเร็จ:', e);
+    Swal.fire('โหลดข้อมูลไม่สำเร็จ', e.message||'กรุณาลองเข้าสู่ระบบใหม่', 'error');
+  });
+}
+
+// ── DATATABLES THAI ──
+function dtLang(){ return{search:'ค้นหา:',lengthMenu:'แสดง _MENU_ รายการ',info:'แสดง _START_ ถึง _END_ จาก _TOTAL_ รายการ',infoEmpty:'ไม่มีข้อมูล',infoFiltered:'(กรองจาก _MAX_ รายการ)',zeroRecords:'ไม่พบข้อมูล',paginate:{first:'แรก',last:'สุดท้าย',next:'ถัดไป',previous:'ก่อนหน้า'}}; }
+
+// ══════════════════════════════════════════
+// THAI DATE PICKER — Custom Vanilla JS
+// 3-mode: Day → Month → Year (20 ปี)
+// แสดง พ.ศ. ทุก view, ปุ่ม วันนี้/ล้าง
+// ══════════════════════════════════════════
+var THAI_MONTHS_FULL=['\u0e21\u0e01\u0e23\u0e32\u0e04\u0e21','\u0e01\u0e38\u0e21\u0e20\u0e32\u0e1e\u0e31\u0e19\u0e18\u0e4c','\u0e21\u0e35\u0e19\u0e32\u0e04\u0e21','\u0e40\u0e21\u0e29\u0e32\u0e22\u0e19','\u0e1e\u0e24\u0e29\u0e20\u0e32\u0e04\u0e21','\u0e21\u0e34\u0e16\u0e38\u0e19\u0e32\u0e22\u0e19','\u0e01\u0e23\u0e01\u0e0e\u0e32\u0e04\u0e21','\u0e2a\u0e34\u0e07\u0e2b\u0e32\u0e04\u0e21','\u0e01\u0e31\u0e19\u0e22\u0e32\u0e22\u0e19','\u0e15\u0e38\u0e25\u0e32\u0e04\u0e21','\u0e1e\u0e24\u0e28\u0e08\u0e34\u0e01\u0e32\u0e22\u0e19','\u0e18\u0e31\u0e19\u0e27\u0e32\u0e04\u0e21'];
+var THAI_MONTHS_SHORT=['\u0e21.\u0e04.','\u0e01.\u0e1e.','\u0e21\u0e35.\u0e04.','\u0e40\u0e21.\u0e22.','\u0e1e.\u0e04.','\u0e21\u0e34.\u0e22.','\u0e01.\u0e04.','\u0e2a.\u0e04.','\u0e01.\u0e22.','\u0e15.\u0e04.','\u0e1e.\u0e22.','\u0e18.\u0e04.'];
+var THAI_DAY_NAMES=['\u0e2d\u0e32','\u0e08','\u0e2d','\u0e1e','\u0e1e\u0e24','\u0e28','\u0e2a'];
+
+window.ThaiDatePicker=function(displayId,hiddenId,popupId,opts){
+  var displayEl=document.getElementById(displayId);
+  var hiddenEl=document.getElementById(hiddenId);
+  var popupEl=document.getElementById(popupId);
+  if(!displayEl||!hiddenEl||!popupEl) return null;
+  opts=opts||{};
+  var onSelect=opts.onSelect||null;
+
+  var now=new Date(); var viewMonth=now.getMonth(); var viewYear=now.getFullYear();
+  var selectedDate=null; var currentView='day';
+  function pad(n){ return n<10?'0'+n:''+n; }
+
+  function renderDay(){
+    var beYear=viewYear+543;
+    var first=new Date(viewYear,viewMonth,1); var startDay=first.getDay();
+    var daysInMonth=new Date(viewYear,viewMonth+1,0).getDate();
+    var prevDays=new Date(viewYear,viewMonth,0).getDate();
+    var today=new Date(); today.setHours(0,0,0,0);
+
+    var html='<div class="tdp-header">';
+    html+='<button type="button" class="tdp-prev"><i class="fas fa-chevron-left"></i></button>';
+    html+='<span class="tdp-title"><span class="tdp-month-label">'+THAI_MONTHS_FULL[viewMonth]+'</span> <span class="tdp-year-label">'+beYear+'</span></span>';
+    html+='<button type="button" class="tdp-next"><i class="fas fa-chevron-right"></i></button>';
+    html+='</div><div class="tdp-days">';
+    for(var i=0;i<7;i++) html+='<div class="tdp-day-name">'+THAI_DAY_NAMES[i]+'</div>';
+    for(var p=startDay-1;p>=0;p--) html+='<div class="tdp-day other">'+(prevDays-p)+'</div>';
+    for(var d=1;d<=daysInMonth;d++){
+      var cls='tdp-day';
+      var cur=new Date(viewYear,viewMonth,d); cur.setHours(0,0,0,0);
+      if(cur.getTime()===today.getTime()) cls+=' today';
+      if(selectedDate&&cur.getTime()===selectedDate.getTime()) cls+=' selected';
+      html+='<div class="'+cls+'" data-day="'+d+'">'+d+'</div>';
+    }
+    var total=startDay+daysInMonth; var rem=total%7===0?0:7-(total%7);
+    for(var n=1;n<=rem;n++) html+='<div class="tdp-day other">'+n+'</div>';
+    html+='</div><div class="tdp-footer">';
+    html+='<button type="button" class="tdp-today">\u0e27\u0e31\u0e19\u0e19\u0e35\u0e49</button>';
+    html+='<button type="button" class="tdp-clear">\u0e25\u0e49\u0e32\u0e07</button></div>';
+    popupEl.innerHTML=html;
+    popupEl.querySelector('.tdp-prev').addEventListener('click',function(e){e.stopPropagation();viewMonth--;if(viewMonth<0){viewMonth=11;viewYear--;}renderDay();});
+    popupEl.querySelector('.tdp-next').addEventListener('click',function(e){e.stopPropagation();viewMonth++;if(viewMonth>11){viewMonth=0;viewYear++;}renderDay();});
+    popupEl.querySelector('.tdp-month-label').addEventListener('click',function(e){e.stopPropagation();currentView='month';renderMonth();});
+    popupEl.querySelector('.tdp-year-label').addEventListener('click',function(e){e.stopPropagation();currentView='year';renderYear();});
+    popupEl.querySelector('.tdp-today').addEventListener('click',function(e){e.stopPropagation();doSelect(today);});
+    popupEl.querySelector('.tdp-clear').addEventListener('click',function(e){e.stopPropagation();clearDate();});
+    var cells=popupEl.querySelectorAll('.tdp-day[data-day]');
+    for(var c=0;c<cells.length;c++){
+      cells[c].addEventListener('click',function(e){e.stopPropagation();doSelect(new Date(viewYear,viewMonth,parseInt(this.getAttribute('data-day'))));});
+    }
+  }
+
+  function renderMonth(){
+    var beYear=viewYear+543;
+    var html='<div class="tdp-header"><button type="button" class="tdp-prev"><i class="fas fa-chevron-left"></i></button><span class="tdp-title">'+beYear+'</span><button type="button" class="tdp-next"><i class="fas fa-chevron-right"></i></button></div><div class="tdp-month-grid">';
+    for(var m=0;m<12;m++){
+      var cls='tdp-cell'; if(m===viewMonth) cls+=' selected';
+      html+='<div class="'+cls+'" data-month="'+m+'">'+THAI_MONTHS_SHORT[m]+'</div>';
+    }
+    html+='</div>';
+    popupEl.innerHTML=html;
+    popupEl.querySelector('.tdp-prev').addEventListener('click',function(e){e.stopPropagation();viewYear--;renderMonth();});
+    popupEl.querySelector('.tdp-next').addEventListener('click',function(e){e.stopPropagation();viewYear++;renderMonth();});
+    popupEl.querySelector('.tdp-title').addEventListener('click',function(e){e.stopPropagation();currentView='year';renderYear();});
+    var cells=popupEl.querySelectorAll('.tdp-cell[data-month]');
+    for(var c=0;c<cells.length;c++){
+      cells[c].addEventListener('click',function(e){e.stopPropagation();viewMonth=parseInt(this.getAttribute('data-month'));currentView='day';renderDay();});
+    }
+  }
+
+  function renderYear(){
+    var startYear=viewYear-(viewYear%20); var endYear=startYear+19;
+    var html='<div class="tdp-header"><button type="button" class="tdp-prev"><i class="fas fa-chevron-left"></i></button><span class="tdp-title">'+(startYear+543)+' \u2013 '+(endYear+543)+'</span><button type="button" class="tdp-next"><i class="fas fa-chevron-right"></i></button></div><div class="tdp-year-grid">';
+    for(var y=startYear;y<=endYear;y++){
+      var cls='tdp-cell'; if(y===viewYear) cls+=' selected';
+      html+='<div class="'+cls+'" data-year="'+y+'">'+(y+543)+'</div>';
+    }
+    html+='</div>';
+    popupEl.innerHTML=html;
+    popupEl.querySelector('.tdp-prev').addEventListener('click',function(e){e.stopPropagation();viewYear-=20;renderYear();});
+    popupEl.querySelector('.tdp-next').addEventListener('click',function(e){e.stopPropagation();viewYear+=20;renderYear();});
+    var cells=popupEl.querySelectorAll('.tdp-cell[data-year]');
+    for(var c=0;c<cells.length;c++){
+      cells[c].addEventListener('click',function(e){e.stopPropagation();viewYear=parseInt(this.getAttribute('data-year'));currentView='month';renderMonth();});
+    }
+  }
+
+  function doSelect(d){
+    selectedDate=new Date(d); selectedDate.setHours(0,0,0,0);
+    viewMonth=d.getMonth(); viewYear=d.getFullYear(); currentView='day';
+    displayEl.value=pad(d.getDate())+'/'+pad(d.getMonth()+1)+'/'+(d.getFullYear()+543);
+    hiddenEl.value=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+    popupEl.classList.remove('show'); renderDay();
+    if(typeof onSelect==='function') onSelect(hiddenEl.value);
+  }
+
+  function clearDate(){
+    selectedDate=null; displayEl.value=''; hiddenEl.value='';
+    currentView='day'; popupEl.classList.remove('show'); renderDay();
+    if(typeof onSelect==='function') onSelect('');
+  }
+
+  displayEl.addEventListener('click',function(e){
+    e.stopPropagation();
+    if(currentView==='day') renderDay(); else if(currentView==='month') renderMonth(); else renderYear();
+    popupEl.classList.remove('above'); popupEl.classList.toggle('show');
+    if(popupEl.classList.contains('show')){ var rect=popupEl.getBoundingClientRect(); if(rect.bottom>window.innerHeight) popupEl.classList.add('above'); }
+  });
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&popupEl.classList.contains('show')) popupEl.classList.remove('show');});
+  document.addEventListener('click',function(){popupEl.classList.remove('show');});
+  popupEl.addEventListener('click',function(e){e.stopPropagation();});
+  renderDay();
+
+  return {
+    setValue:function(ceStr){if(!ceStr){clearDate();return;}var d=new Date(ceStr);if(!isNaN(d.getTime())) doSelect(d);},
+    getValue:function(){return hiddenEl.value;},
+    clear:clearDate
+  };
+};
+</script>

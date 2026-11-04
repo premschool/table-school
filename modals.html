@@ -1,0 +1,131 @@
+<!-- TEACHER FORM MODAL -->
+<div class="modal fade" id="teacherFormModal" tabindex="-1" data-bs-backdrop="static">
+<div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+<div class="modal-content">
+<div class="modal-header modal-header-custom"><h5 class="modal-title" id="teacherFormTitle"><i class="fas fa-user-plus me-2"></i>เพิ่มครู</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+<div class="modal-body p-4">
+<form id="teacherForm" onsubmit="return false;">
+<input type="hidden" id="tfId">
+<div class="row g-3">
+<div class="col-md-4"><label class="form-label">ชื่อผู้ใช้ (Login) <span class="text-danger">*</span></label><input type="text" id="tfUserId" class="form-control" placeholder="เช่น somchai"></div>
+<div class="col-md-4"><label class="form-label">คำนำหน้า</label><select id="tfPrefix" class="form-select"><option value="">เลือก</option><option>นาย</option><option>นาง</option><option>นางสาว</option></select></div>
+<div class="col-md-4"><label class="form-label">ตั้ง PIN/รหัสผ่าน <span class="text-danger" id="tfPasswordRequired">*</span></label><input type="password" id="tfPassword" class="form-control" autocomplete="new-password" placeholder="ครูใช้ PIN 6 หลัก" oninput="if(this.dataset.pinMode==='true'){this.value=this.value.replace(/\D/g,'').slice(0,6)}"><small class="text-muted">ครูใช้ PIN ตัวเลข 6 หลัก; สิทธิ์อื่นใช้รหัสผ่านอย่างน้อย 10 ตัว</small></div>
+<div class="col-md-6"><label class="form-label">ชื่อ <span class="text-danger">*</span></label><input type="text" id="tfFirstName" class="form-control" required></div>
+<div class="col-md-6"><label class="form-label">นามสกุล <span class="text-danger">*</span></label><input type="text" id="tfLastName" class="form-control" required></div>
+<div class="col-md-4"><label class="form-label">กลุ่มสาระ</label><input type="text" id="tfDepartment" class="form-control" placeholder="เช่น ภาษาไทย"></div>
+<div class="col-md-4"><label class="form-label">ห้องสอนประจำ</label><input type="text" id="tfTeachingRoom" class="form-control" placeholder="เช่น 101, Lab1"></div>
+<div class="col-md-4"><label class="form-label">สิทธิ์ <span class="text-danger">*</span></label>
+<div id="tfRoleGroup" class="d-flex flex-wrap gap-2">
+<label class="badge-check"><input type="checkbox" name="tfRoleCb" value="Teacher" checked onchange="_syncTeacherPasswordMode()"> ครู</label>
+<label class="badge-check"><input type="checkbox" name="tfRoleCb" value="Scheduler" onchange="_syncTeacherPasswordMode()"> จัดตาราง</label>
+<label class="badge-check"><input type="checkbox" name="tfRoleCb" value="Director" onchange="_syncTeacherPasswordMode()"> ผอ.</label>
+<label class="badge-check"><input type="checkbox" name="tfRoleCb" value="Admin" onchange="_syncTeacherPasswordMode()"> แอดมิน</label>
+</div></div>
+<div class="col-md-6"><label class="form-label">เบอร์โทร</label><input type="text" id="tfPhone" class="form-control"></div>
+<div class="col-md-6"><label class="form-label">อีเมล</label><input type="email" id="tfEmail" class="form-control"></div>
+<div class="col-md-6"><label class="form-label">Telegram Chat ID</label><input type="text" id="tfTelegram" class="form-control"></div>
+<div class="col-md-6"><label class="form-label">คาบสอนแทนสูงสุด/สัปดาห์</label><input type="number" id="tfMaxSub" class="form-control" value="5" min="0"></div>
+</div></form></div>
+<div class="modal-footer"><button type="button" class="btn btn-outline" data-bs-dismiss="modal"><i class="fas fa-times me-1"></i>ยกเลิก</button><button type="button" class="btn btn-primary" onclick="doSaveTeacher()"><i class="fas fa-save me-1"></i>บันทึก</button></div>
+</div></div></div>
+
+<!-- SUBJECT FORM MODAL -->
+<div class="modal fade" id="subjectFormModal" tabindex="-1" data-bs-backdrop="static">
+<div class="modal-dialog modal-dialog-centered" style="max-width:600px">
+<div class="modal-content">
+<div class="modal-header modal-header-custom"><h5 class="modal-title" id="subjectFormTitle"><i class="fas fa-book me-2"></i>เพิ่มรายวิชา</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+<div class="modal-body p-4">
+<form id="subjectForm" onsubmit="return false;">
+<input type="hidden" id="sfId">
+<div class="row g-3">
+<div class="col-md-6"><label class="form-label">รหัสวิชา <span class="text-danger">*</span></label><input type="text" id="sfCode" class="form-control" placeholder="เช่น ท21101"></div>
+<div class="col-md-6"><label class="form-label">ชื่อวิชา <span class="text-danger">*</span></label><input type="text" id="sfName" class="form-control" required></div>
+<div class="col-md-4"><label class="form-label">ประเภท</label><select id="sfType" class="form-select"><option>พื้นฐาน</option><option>เพิ่มเติม</option><option>กิจกรรม</option></select></div>
+<div class="col-md-4"><label class="form-label">คาบ/สัปดาห์</label><input type="number" id="sfPeriods" class="form-control" value="1" min="1"></div>
+<div class="col-md-4"><label class="form-label">ห้องสอน</label><input type="text" id="sfRoom" class="form-control" placeholder="เช่น Lab"></div>
+</div>
+<hr class="my-3">
+<div class="mb-2"><label class="form-label fw-bold"><i class="fas fa-layer-group me-1"></i>ระดับชั้นที่สอน</label></div>
+<div id="sfGradePicker" class="d-flex flex-wrap gap-2 mb-3" style="max-height:120px;overflow-y:auto"></div>
+<div class="mb-2"><label class="form-label fw-bold"><i class="fas fa-school me-1"></i>ห้องเรียนที่สอน</label>
+<small class="text-muted ms-2">(เลือกระดับชั้นก่อน)</small></div>
+<div id="sfClassPicker" class="d-flex flex-wrap gap-2" style="max-height:160px;overflow-y:auto">
+<span class="text-muted small">กรุณาเลือกระดับชั้นก่อน</span>
+</div>
+</form></div>
+<div class="modal-footer"><button type="button" class="btn btn-outline" data-bs-dismiss="modal">ยกเลิก</button><button type="button" class="btn btn-primary" onclick="doSaveSubject()"><i class="fas fa-save me-1"></i>บันทึก</button></div>
+</div></div></div>
+
+<!-- PERIOD FORM MODAL -->
+<div class="modal fade" id="periodFormModal" tabindex="-1" data-bs-backdrop="static">
+<div class="modal-dialog modal-dialog-centered" style="max-width:450px">
+<div class="modal-content">
+<div class="modal-header modal-header-custom"><h5 class="modal-title" id="periodFormTitle"><i class="fas fa-clock me-2"></i>เพิ่มคาบเรียน</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+<div class="modal-body p-4">
+<form id="periodForm" onsubmit="return false;">
+<input type="hidden" id="pfOrigNum">
+<div class="row g-3">
+<div class="col-6"><label class="form-label">ลำดับคาบ</label><input type="number" id="pfNumber" class="form-control" min="1"></div>
+<div class="col-6"><label class="form-label">ระยะเวลา (นาที)</label><input type="number" id="pfDuration" class="form-control" value="50" min="1"></div>
+<div class="col-12"><label class="form-label">ชื่อคาบ</label><input type="text" id="pfName" class="form-control" placeholder="เช่น คาบที่ 1"></div>
+<div class="col-6"><label class="form-label">เวลา</label><input type="text" id="pfTime" class="form-control" placeholder="08:30-09:20"></div>
+<div class="col-6"><label class="form-label">ประเภท</label><select id="pfType" class="form-select"><option>เรียน</option><option>พักเที่ยง</option><option>ซ่อมเสริม</option><option>PLC</option></select></div>
+</div></form></div>
+<div class="modal-footer"><button type="button" class="btn btn-outline" data-bs-dismiss="modal">ยกเลิก</button><button type="button" class="btn btn-primary" onclick="doSavePeriod()"><i class="fas fa-save me-1"></i>บันทึก</button></div>
+</div></div></div>
+
+<!-- CLASSROOM FORM MODAL -->
+<div class="modal fade" id="classroomFormModal" tabindex="-1" data-bs-backdrop="static">
+<div class="modal-dialog modal-dialog-centered" style="max-width:480px">
+<div class="modal-content">
+<div class="modal-header modal-header-custom"><h5 class="modal-title" id="classroomFormTitle"><i class="fas fa-school me-2"></i>เพิ่มชั้นเรียน</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+<div class="modal-body p-4">
+<form id="classroomForm" onsubmit="return false;">
+<input type="hidden" id="cfId">
+<div class="row g-3">
+<div class="col-6"><label class="form-label">ระดับชั้น <span class="text-danger">*</span></label><select id="cfGradeLevel" class="form-select" onchange="autoClassName()"><option value="">เลือก</option><option>ป.1</option><option>ป.2</option><option>ป.3</option><option>ป.4</option><option>ป.5</option><option>ป.6</option><option>ม.1</option><option>ม.2</option><option>ม.3</option><option>ม.4</option><option>ม.5</option><option>ม.6</option></select></div>
+<div class="col-6"><label class="form-label">ห้องที่ <span class="text-danger">*</span></label><select id="cfRoomNumber" class="form-select" onchange="autoClassName()"><option value="">เลือก</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option><option>11</option></select></div>
+<div class="col-12"><label class="form-label">ชื่อชั้นเรียน</label><input type="text" id="cfClassName" class="form-control" placeholder="เช่น ป.1/1 (สร้างอัตโนมัติ)"></div>
+<div class="col-6"><label class="form-label">ครูประจำชั้น</label><select id="cfHomeroom" class="form-select"><option value="">ไม่ระบุ</option></select></div>
+<div class="col-6"><label class="form-label">จำนวนนักเรียน</label><input type="number" id="cfStudentCount" class="form-control" value="0" min="0"></div>
+</div></form></div>
+<div class="modal-footer"><button type="button" class="btn btn-outline" data-bs-dismiss="modal">ยกเลิก</button><button type="button" class="btn btn-primary" onclick="doSaveClassroom()"><i class="fas fa-save me-1"></i>บันทึก</button></div>
+</div></div></div>
+
+<!-- ASSIGN SUBSTITUTE MODAL -->
+<div class="modal fade" id="assignModal" tabindex="-1" data-bs-backdrop="static">
+<div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+<div class="modal-content">
+<div class="modal-header modal-header-custom"><h5 class="modal-title"><i class="fas fa-exchange-alt me-2"></i>เลือกครูสอนแทน</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+<div class="modal-body p-4">
+<div class="mb-3 p-3" style="background:var(--primary-light);border-radius:var(--radius-sm)">
+<div id="assignSlotInfo" class="small"></div>
+</div>
+<input type="hidden" id="assignLeaveId">
+<input type="hidden" id="assignDate">
+<input type="hidden" id="assignPeriod">
+<input type="hidden" id="assignOrigTeacher">
+<input type="hidden" id="assignClassName">
+<input type="hidden" id="assignSubject">
+<h6 class="mb-2"><i class="fas fa-user-check me-1"></i>ครูที่ว่าง</h6>
+<div id="availableTeachersList"><div class="text-muted text-center py-3">กำลังค้นหา...</div></div>
+</div>
+</div></div></div>
+
+<!-- UNIVERSAL IMPORT MODAL -->
+<div class="modal fade" id="importModal" tabindex="-1" data-bs-backdrop="static">
+<div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+<div class="modal-content">
+<div class="modal-header modal-header-custom"><h5 class="modal-title" id="importModalTitle"><i class="fas fa-file-upload me-2"></i>Import ข้อมูล</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+<div class="modal-body p-4">
+<input type="hidden" id="importType" value="">
+<div class="alert alert-info small" id="importHelp"><i class="fas fa-info-circle me-1"></i>รองรับไฟล์ .xlsx, .xls, .csv</div>
+<div class="mb-3"><input type="file" id="importFile" class="form-control" accept=".xlsx,.xls,.csv" onchange="previewImportFile(this)"></div>
+<div id="importPreviewArea"></div>
+</div>
+<div class="modal-footer">
+<span class="me-auto small text-muted" id="importCount"></span>
+<button type="button" class="btn btn-outline" data-bs-dismiss="modal">ยกเลิก</button>
+<button type="button" class="btn btn-success" id="btnDoImport" onclick="doImportData()" disabled><i class="fas fa-upload me-1"></i>Import</button>
+</div>
+</div></div></div>

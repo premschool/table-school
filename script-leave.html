@@ -1,0 +1,517 @@
+<!--
+  PTNTIME-SCHOOL — script-leave GitHub version
+  Uses apiCall(action, args) from script-core.html (fetch to Apps Script Web App).
+  Ensure script-core.html is loaded before this file.
+-->
+<script>
+// ══ PTNTIME-SCHOOL — Leave & Substitute UI ══
+var _leaveFile = null;
+var _pendingDT, _historyDT, _unassignedDT, _subHistoryDT;
+
+// ── LEAVE FORM ──
+var _leaveSchedCache=null;
+var _leaveDatePicker=null;
+
+function initLeaveForm(){
+  _leaveFile=null;
+  document.getElementById('leaveFileArea').innerHTML='';
+  document.getElementById('leaveSelectAll').checked=true;
+  // Init ThaiDatePicker (lazy)
+  if(!_leaveDatePicker){
+    _leaveDatePicker=new ThaiDatePicker('leaveDateDisplay','leaveDate','leaveDatePopup',{
+      onSelect:function(ceDate){ _loadLeavePeriods(); }
+    });
+  }
+  // Set today
+  _leaveDatePicker.setValue(new Date().toISOString().split('T')[0]);
+}
+
+function _loadLeavePeriods(){
+  var dateVal=document.getElementById('leaveDate').value;
+  if(!dateVal){ document.getElementById('leavePeriodCheckboxes').innerHTML='<div class="text-muted py-2"><i class="fas fa-info-circle me-1"></i>\u0e01\u0e23\u0e38\u0e13\u0e32\u0e40\u0e25\u0e37\u0e2d\u0e01\u0e27\u0e31\u0e19\u0e17\u0e35\u0e48</div>'; return; }
+
+  var DAYS=['\u0e2d\u0e32\u0e17\u0e34\u0e15\u0e22\u0e4c','\u0e08\u0e31\u0e19\u0e17\u0e23\u0e4c','\u0e2d\u0e31\u0e07\u0e04\u0e32\u0e23','\u0e1e\u0e38\u0e18','\u0e1e\u0e24\u0e2b\u0e31\u0e2a\u0e1a\u0e14\u0e35','\u0e28\u0e38\u0e01\u0e23\u0e4c','\u0e40\u0e2a\u0e32\u0e23\u0e4c'];
+  var dt=new Date(dateVal+'T00:00:00');
+  var dow=dt.getDay();
+  if(dow===0||dow===6){
+    document.getElementById('leavePeriodCheckboxes').innerHTML='<div class="text-muted py-2"><i class="fas fa-umbrella-beach me-1"></i>\u0e27\u0e31\u0e19\u0e2b\u0e22\u0e38\u0e14 \u2014 \u0e44\u0e21\u0e48\u0e21\u0e35\u0e04\u0e32\u0e1a\u0e2a\u0e2d\u0e19</div>';
+    return;
+  }
+  var dayName=DAYS[dow];
+
+  var renderPeriods=function(schedData){
+    var dayItems=schedData.filter(function(s){ return s.day_of_week===dayName; });
+    var periodsInfo=(APP.periods||[]).filter(function(p){ return p.periodType!=='\u0e1e\u0e31\u0e01\u0e40\u0e17\u0e35\u0e48\u0e22\u0e07'; });
+    var periodTimeMap={};
+    periodsInfo.forEach(function(p){ periodTimeMap[String(p.periodNumber)]=p.periodTime||''; });
+
+    dayItems.sort(function(a,b){ return Number(a.period)-Number(b.period); });
+
+    var el=document.getElementById('leavePeriodCheckboxes');
+    if(dayItems.length===0){
+      el.innerHTML='<div class="text-muted py-2"><i class="fas fa-coffee me-1"></i>\u0e44\u0e21\u0e48\u0e21\u0e35\u0e04\u0e32\u0e1a\u0e2a\u0e2d\u0e19\u0e43\u0e19\u0e27\u0e31\u0e19'+dayName+'</div>';
+      return;
+    }
+    var selectAll=document.getElementById('leaveSelectAll').checked;
+    var html='<table class="table table-sm table-bordered mb-0"><thead><tr><th style="width:40px"></th><th style="width:50px">\u0e04\u0e32\u0e1a</th><th>\u0e40\u0e27\u0e25\u0e32</th><th>\u0e27\u0e34\u0e0a\u0e32</th><th>\u0e2b\u0e49\u0e2d\u0e07\u0e40\u0e23\u0e35\u0e22\u0e19</th><th>\u0e2b\u0e49\u0e2d\u0e07\u0e2a\u0e2d\u0e19</th></tr></thead><tbody>';
+    dayItems.forEach(function(s){
+      var pn=String(s.period);
+      var checked=selectAll?' checked':'';
+      html+='<tr><td class="text-center"><input type="checkbox" class="leave-period-cb" value="'+pn+'"'+checked+'></td>';
+      html+='<td class="text-center fw-bold">'+pn+'</td>';
+      html+='<td>'+_esc(periodTimeMap[pn]||'')+'</td>';
+      html+='<td><strong>'+_esc(s.subject_code||'')+'</strong> '+_esc(s.subject_name||'')+'</td>';
+      html+='<td>'+_esc(s.class_name||'')+'</td>';
+      html+='<td>'+_esc(s.room||'')+'</td></tr>';
+    });
+    html+='</tbody></table>';
+    el.innerHTML=html;
+  };
+
+  if(_leaveSchedCache){
+    renderPeriods(_leaveSchedCache);
+  } else {
+    document.getElementById('leavePeriodCheckboxes').innerHTML='<div class="text-center py-2"><i class="fas fa-spinner fa-spin me-1"></i>\u0e01\u0e33\u0e25\u0e31\u0e07\u0e42\u0e2b\u0e25\u0e14\u0e15\u0e32\u0e23\u0e32\u0e07\u0e2a\u0e2d\u0e19...</div>';
+    apiCall("getTimetableByTeacher", [APP.teacherId,APP.token]).then(function(r){
+      _leaveSchedCache=r.data||[];
+      renderPeriods(_leaveSchedCache);
+    }).catch(function(e){
+      document.getElementById('leavePeriodCheckboxes').innerHTML='<div class="text-danger py-2">\u0e42\u0e2b\u0e25\u0e14\u0e02\u0e49\u0e2d\u0e21\u0e39\u0e25\u0e44\u0e21\u0e48\u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08</div>';
+    });
+  }
+}
+
+function _toggleAllLeavePeriods(checked){
+  document.querySelectorAll('.leave-period-cb').forEach(function(cb){ cb.checked=checked; });
+}
+
+function handleLeaveDrop(e){
+  e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.remove('drag-over');
+  var files=Array.from(e.dataTransfer.files);
+  if(files.length>0) setLeaveFile(files[0]);
+}
+function handleLeaveFileSelect(input){
+  if(input.files.length>0) setLeaveFile(input.files[0]);
+  input.value='';
+}
+function setLeaveFile(file){
+  _leaveFile=file;
+  var sz=(file.size/1024/1024).toFixed(2);
+  document.getElementById('leaveFileArea').innerHTML='<div class="file-item"><div class="file-info"><i class="fas fa-file me-2 text-primary"></i><div><div class="file-name">'+_esc(file.name)+' ('+sz+' MB)</div></div></div><div><button class="btn btn-xs btn-danger" onclick="removeLeaveFile()"><i class="fas fa-times"></i></button></div></div>';
+}
+function removeLeaveFile(){
+  _leaveFile=null;
+  document.getElementById('leaveFileArea').innerHTML='';
+}
+
+function doSubmitLeave(){
+  var date=document.getElementById('leaveDate').value;
+  if(!date) return Swal.fire('แจ้งเตือน','กรุณาเลือกวันที่','warning');
+  var checks=document.querySelectorAll('.leave-period-cb:checked');
+  if(checks.length===0) return Swal.fire('แจ้งเตือน','กรุณาเลือกคาบที่ลา','warning');
+  var periods=[]; checks.forEach(function(c){ periods.push(c.value); });
+
+  showLoading('กำลังส่งใบลา...');
+
+  var afterUpload=function(fileInfo){
+    apiCall("submitLeave", [{
+      leave_date:date,
+      leave_type:document.getElementById('leaveType').value,
+      periods:periods,
+      reason:document.getElementById('leaveReason').value,
+      attachment_file_id:fileInfo.fileId||'',
+      attachment_url:fileInfo.fileUrl||'',
+      attachment_name:fileInfo.fileName||''
+    },APP.token]).then(function(r){
+      hideLoading();
+      if(r.success){ Swal.fire({icon:'success',title:'ส่งใบลาสำเร็จ',text:r.message,timer:2000,showConfirmButton:false}); document.getElementById('leaveForm').reset(); initLeaveForm(); }
+      else Swal.fire('ผิดพลาด',r.message,'error');
+    }).catch(function(e){ hideLoading(); Swal.fire('ผิดพลาด',e.message,'error'); });
+  };
+
+  if(_leaveFile){
+    uploadLeaveFile(_leaveFile,function(info){ afterUpload(info); },function(err){ hideLoading(); Swal.fire('ผิดพลาด','อัปโหลดไฟล์ล้มเหลว: '+err,'error'); });
+  } else { afterUpload({}); }
+}
+
+function uploadLeaveFile(file,onSuccess,onError){
+  var reader=new FileReader();
+  reader.onload=function(){
+    var base64=reader.result.split(',')[1];
+    apiCall("uploadFileBase64", [base64,file.name,file.type,APP.token]).then(function(r){
+      if(r.success) onSuccess(r);
+      else onError(r.message||'Upload failed');
+    }).catch(function(e){ onError(e.message); });
+  };
+  reader.onerror=function(){ onError('File read error'); };
+  reader.readAsDataURL(file);
+}
+
+// ── PENDING LEAVES ──
+function loadPendingLeaves(){
+  showLoading();
+  apiCall("getAllLeaves", [APP.token]).then(function(r){
+    hideLoading();
+    if(_pendingDT){_pendingDT.destroy();$('#pendingLeavesTable tbody').empty();}
+    var rows=(r.data||[]).map(function(l,i){
+      var periods=l.periods; if(typeof periods==='string') try{periods=JSON.parse(periods)}catch(e){}
+      var pStr=Array.isArray(periods)?periods.join(', '):periods;
+      var fileBtn=l.attachment_url?'<a href="'+l.attachment_url+'" target="_blank" class="btn btn-xs btn-outline"><i class="fas fa-paperclip"></i></a>':'-';
+      var badge=l.status==='pending'?'badge-pending':l.status==='approved'?'badge-active':'badge-rejected';
+      var statusText={pending:'รออนุมัติ',approved:'อนุมัติ',rejected:'ปฏิเสธ'}[l.status]||l.status;
+      var actions=l.status==='pending'?
+        '<button class="btn btn-success btn-xs me-1" onclick="doApproveLeave(\''+l.leave_id+'\')"><i class="fas fa-check"></i></button>'+
+        '<button class="btn btn-danger btn-xs" onclick="doRejectLeave(\''+l.leave_id+'\')"><i class="fas fa-times"></i></button>':'-';
+      return '<tr><td>'+(i+1)+'</td><td>'+_esc(l.teacher_name)+'</td><td>'+_toBE(l.leave_date)+'</td><td>'+_esc(l.leave_type)+'</td><td>'+pStr+'</td><td>'+_esc(l.reason||'-')+'</td><td>'+fileBtn+'</td><td><span class="badge-status '+badge+'">'+statusText+'</span></td><td>'+actions+'</td></tr>';
+    }).join('');
+    $('#pendingLeavesTable tbody').html(rows);
+    _pendingDT=$('#pendingLeavesTable').DataTable({order:[[2,'desc']],pageLength:10,language:dtLang(),destroy:true});
+  });
+}
+
+function doApproveLeave(id){
+  Swal.fire({title:'อนุมัติใบลา?',icon:'question',showCancelButton:true,confirmButtonText:'อนุมัติ',cancelButtonText:'ยกเลิก'}).then(function(r){
+    if(r.isConfirmed){ showLoading(); apiCall("approveLeave", [id,APP.token]).then(function(r){ hideLoading(); if(r.success){ Swal.fire({icon:'success',title:'อนุมัติสำเร็จ',timer:1500,showConfirmButton:false}); loadPendingLeaves(); } else Swal.fire('ผิดพลาด',r.message,'error'); }); }
+  });
+}
+function doRejectLeave(id){
+  Swal.fire({title:'ปฏิเสธใบลา?',input:'textarea',inputPlaceholder:'เหตุผล (ถ้ามี)',showCancelButton:true,confirmButtonText:'ปฏิเสธ',confirmButtonColor:'#ef4444',cancelButtonText:'ยกเลิก'}).then(function(r){
+    if(r.isConfirmed){ showLoading(); apiCall("rejectLeave", [id,r.value||'',APP.token]).then(function(r){ hideLoading(); if(r.success){ Swal.fire({icon:'info',title:'ปฏิเสธแล้ว',timer:1500,showConfirmButton:false}); loadPendingLeaves(); } }); }
+  });
+}
+
+// ── LEAVE HISTORY ──
+function loadLeaveHistory(){
+  showLoading();
+  var isAdminView=APP.activeRole==='Admin'||APP.activeRole==='Director';
+  var onSuccess=function(r){
+    hideLoading();
+    if(!r||!r.success){
+      Swal.fire('โหลดประวัติการลาไม่สำเร็จ',(r&&r.message)||'กรุณาลองใหม่อีกครั้ง','error');
+      return;
+    }
+    if(_historyDT){_historyDT.destroy();$('#leaveHistoryTable tbody').empty();}
+    var rows=(r.data||[]).map(function(l,i){
+      var periods=l.periods; if(typeof periods==='string') try{periods=JSON.parse(periods)}catch(e){}
+      var pStr=Array.isArray(periods)?periods.join(', '):periods;
+      var badge=l.status==='pending'?'badge-pending':l.status==='approved'?'badge-active':'badge-rejected';
+      var statusText={pending:'รออนุมัติ',approved:'อนุมัติ',rejected:'ปฏิเสธ'}[l.status]||l.status;
+      var actions=!isAdminView&&l.status==='pending'?'<button class="btn btn-primary btn-xs me-1" onclick="doEditLeave(\''+l.leave_id+'\',\''+l.leave_date+'\',\''+_esc(l.leave_type)+'\',\''+pStr+'\',\''+_esc(l.reason||'').replace(/'/g,'\\\'')+'\')"><i class="fas fa-edit"></i></button><button class="btn btn-danger btn-xs" onclick="doCancelLeave(\''+l.leave_id+'\')"><i class="fas fa-times"></i></button>':'-';
+      return '<tr><td>'+(i+1)+'</td><td>'+_esc(l.teacher_name||l.teacher_id||'-')+'</td><td>'+_toBE(l.leave_date)+'</td><td>'+_esc(l.leave_type)+'</td><td>'+pStr+'</td><td>'+_esc(l.reason||'-')+'</td><td><span class="badge-status '+badge+'">'+statusText+'</span></td><td>'+_esc(l.approved_by||'-')+'</td><td>'+_toBE(l.approved_at)+'</td><td>'+actions+'</td></tr>';
+    }).join('');
+    $('#leaveHistoryTable tbody').html(rows);
+    _historyDT=$('#leaveHistoryTable').DataTable({order:[[2,'desc']],pageLength:10,language:dtLang(),destroy:true});
+  };
+  var onFailure=function(e){
+    hideLoading();
+    Swal.fire('โหลดประวัติการลาไม่สำเร็จ',(e&&e.message)||String(e),'error');
+  };
+  apiCall(isAdminView ? 'getAllLeaves' : 'getMyLeaves', [APP.token]).then(onSuccess).catch(onFailure);
+}
+
+function doCancelLeave(leaveId){
+  Swal.fire({title:'ยกเลิกใบลา?',text:'คุณต้องการยกเลิกใบลานี้หรือไม่?',icon:'warning',showCancelButton:true,confirmButtonText:'ยกเลิกใบลา',confirmButtonColor:'#ef4444',cancelButtonText:'ไม่'}).then(function(r){
+    if(r.isConfirmed){
+      showLoading('กำลังยกเลิก...');
+      apiCall("cancelLeave", [leaveId,APP.token]).then(function(res){
+        hideLoading();
+        if(res.success){ Swal.fire({icon:'success',title:'ยกเลิกใบลาสำเร็จ',timer:1500,showConfirmButton:false}); loadLeaveHistory(); }
+        else Swal.fire('ผิดพลาด',res.message,'error');
+      }).catch(function(e){ hideLoading(); Swal.fire('ผิดพลาด',e.message,'error'); });
+    }
+  });
+}
+
+function doEditLeave(leaveId,leaveDate,leaveType,periodsStr,reason){
+  Swal.fire({
+    title:'<i class="fas fa-edit me-2"></i>แก้ไขใบลา',
+    html:'<div style="text-align:left;font-size:.85rem">'+
+      '<label class="form-label">ประเภทการลา</label>'+
+      '<select id="swalLeaveType" class="form-select mb-2"><option value="ลาป่วย">ลาป่วย</option><option value="ลากิจ">ลากิจ</option><option value="ลาคลอด">ลาคลอด</option><option value="ลาพักร้อน">ลาพักร้อน</option><option value="อื่นๆ">อื่นๆ</option></select>'+
+      '<label class="form-label">เหตุผล</label>'+
+      '<textarea id="swalLeaveReason" class="form-control" rows="2"></textarea>'+
+      '</div>',
+    showCancelButton:true,confirmButtonText:'<i class="fas fa-save me-1"></i>บันทึก',cancelButtonText:'ยกเลิก',
+    didOpen:function(){
+      document.getElementById('swalLeaveType').value=leaveType;
+      document.getElementById('swalLeaveReason').value=reason;
+    },
+    preConfirm:function(){
+      return {
+        leave_type:document.getElementById('swalLeaveType').value,
+        reason:document.getElementById('swalLeaveReason').value
+      };
+    }
+  }).then(function(r){
+    if(r.isConfirmed){
+      showLoading('กำลังบันทึก...');
+      apiCall("updateLeave", [leaveId,r.value,APP.token]).then(function(res){
+        hideLoading();
+        if(res.success){ Swal.fire({icon:'success',title:'แก้ไขสำเร็จ',timer:1500,showConfirmButton:false}); loadLeaveHistory(); }
+        else Swal.fire('ผิดพลาด',res.message,'error');
+      }).catch(function(e){ hideLoading(); Swal.fire('ผิดพลาด',e.message,'error'); });
+    }
+  });
+}
+
+// ── UNASSIGNED SLOTS ──
+function loadUnassignedSlots(){
+  showLoading();
+  apiCall("getUnassignedSlots", [APP.token]).then(function(r){
+    hideLoading();
+    if(_unassignedDT){_unassignedDT.destroy();$('#unassignedTable tbody').empty();}
+    var rows=(r.data||[]).map(function(s,i){
+      return '<tr><td>'+(i+1)+'</td><td>'+_esc(s.teacher_name)+'</td><td>'+_toBE(s.leave_date)+'</td><td>'+s.period+'</td><td>'+_esc(s.class_name||'-')+'</td><td>'+_esc(s.subject||'-')+'</td>'+
+      '<td><button class="btn btn-primary btn-xs" onclick="openAssignModal(\''+s.leave_id+'\',\''+s.leave_date+'\',\''+s.period+'\',\''+s.teacher_id+'\',\''+_esc(s.teacher_name)+'\',\''+_esc(s.class_name||'')+'\',\''+_esc(s.subject||'')+'\')"><i class="fas fa-user-plus me-1"></i>จัด</button></td></tr>';
+    }).join('');
+    $('#unassignedTable tbody').html(rows);
+    var badge=document.getElementById('unassignedBadge');
+    if(r.data&&r.data.length>0){ badge.textContent=r.data.length; badge.style.display=''; } else badge.style.display='none';
+    _unassignedDT=$('#unassignedTable').DataTable({order:[[2,'asc']],pageLength:10,language:dtLang(),destroy:true});
+  });
+}
+
+function openAssignModal(leaveId,date,period,origTeacher,origName,className,subject){
+  document.getElementById('assignLeaveId').value=leaveId;
+  document.getElementById('assignDate').value=date;
+  document.getElementById('assignPeriod').value=period;
+  document.getElementById('assignOrigTeacher').value=origTeacher;
+  document.getElementById('assignClassName').value=className;
+  document.getElementById('assignSubject').value=subject;
+  document.getElementById('assignSlotInfo').innerHTML='<b>ครู:</b> '+_esc(origName)+' | <b>วันที่:</b> '+date+' | <b>คาบ:</b> '+period+'<br><b>ชั้น:</b> '+_esc(className)+' | <b>วิชา:</b> '+_esc(subject);
+  document.getElementById('availableTeachersList').innerHTML='<div class="text-center py-3"><i class="fas fa-spinner fa-spin"></i> กำลังค้นหาครูที่ว่าง...</div>';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('assignModal')).show();
+  apiCall("findAvailableTeachers", [date,period,APP.token]).then(function(r){
+    var list=r.data||[];
+    if(list.length===0){ document.getElementById('availableTeachersList').innerHTML='<div class="text-muted text-center py-3">ไม่พบครูที่ว่าง</div>'; return; }
+    document.getElementById('availableTeachersList').innerHTML=list.map(function(t){
+      return '<div class="file-item mb-2"><div class="file-info"><div><div class="file-name">'+_esc(t.name)+'</div><div class="text-muted" style="font-size:.72rem">'+_esc(t.department||'-')+' | สอนแทนสัปดาห์นี้: '+t.substitute_count+' คาบ</div></div></div>'+
+      '<button class="btn btn-primary btn-xs" onclick="doAssignSubstitute(\''+t.teacher_id+'\')"><i class="fas fa-check me-1"></i>เลือก</button></div>';
+    }).join('');
+  });
+}
+
+function doAssignSubstitute(subTeacherId){
+  showLoading('กำลังจัดสอนแทน...');
+  apiCall("assignSubstitute", [{
+    leave_id:document.getElementById('assignLeaveId').value,
+    original_teacher_id:document.getElementById('assignOrigTeacher').value,
+    substitute_teacher_id:subTeacherId,
+    schedule_date:document.getElementById('assignDate').value,
+    period:document.getElementById('assignPeriod').value,
+    class_name:document.getElementById('assignClassName').value,
+    subject:document.getElementById('assignSubject').value
+  },APP.token]).then(function(r){
+    hideLoading();
+    if(r.success){
+      bootstrap.Modal.getInstance(document.getElementById('assignModal')).hide();
+      Swal.fire({icon:'success',title:'จัดครูสอนแทนสำเร็จ',timer:2000,showConfirmButton:false});
+      loadUnassignedSlots();
+    } else Swal.fire('ผิดพลาด',r.message,'error');
+  });
+}
+
+// ── SUBSTITUTE HISTORY ──
+window._substituteHistoryRows=[];
+function loadSubstituteHistory(){
+  showLoading();
+  var isAdmin=APP.activeRole&&(APP.activeRole==='Admin'||APP.activeRole==='Scheduler'||APP.activeRole==='Director');
+  var fn=isAdmin?'getAllAssignments':'getMySubstituteAssignments';
+  apiCall(fn, [APP.token]).then(function(r){
+    hideLoading();
+    if(!r||!r.success){ Swal.fire('โหลดประวัติไม่สำเร็จ',(r&&r.message)||'กรุณาลองใหม่อีกครั้ง','error'); return; }
+    window._substituteHistoryRows=r.data||[];
+    if(_subHistoryDT){_subHistoryDT.destroy();$('#substituteHistoryTable tbody').empty();}
+    var rows=(r.data||[]).map(function(a,i){
+      var badge=a.status==='assigned'?'badge-info':a.status==='completed'?'badge-active':'badge-rejected';
+      var statusText={assigned:'จัดแล้ว',completed:'เสร็จสิ้น',cancelled:'ยกเลิก'}[a.status]||a.status;
+      var actions='';
+      if(isAdmin && a.status==='assigned'){
+        actions='<button class="btn btn-primary btn-xs me-1" onclick="doEditAssignment(\''+a.assignment_id+'\',\''+a.schedule_date+'\',\''+a.period+'\')"><i class="fas fa-edit"></i></button><button class="btn btn-danger btn-xs" onclick="doCancelAssignment(\''+a.assignment_id+'\')"><i class="fas fa-times"></i></button>';
+      } else { actions='-'; }
+      return '<tr><td>'+(i+1)+'</td><td>'+_toBE(a.schedule_date)+'</td><td>'+a.period+'</td><td>'+_esc(a.class_name||'-')+'</td><td>'+_esc(a.subject||'-')+'</td><td>'+_esc(a.original_teacher_name||a.original_teacher_id)+'</td><td>'+_esc(a.substitute_teacher_name||a.substitute_teacher_id)+'</td><td><span class="badge-status '+badge+'">'+statusText+'</span></td><td>'+actions+'</td></tr>';
+    }).join('');
+    $('#substituteHistoryTable tbody').html(rows);
+    _subHistoryDT=$('#substituteHistoryTable').DataTable({order:[[1,'desc']],pageLength:10,language:dtLang(),destroy:true});
+  }).catch(function(e){
+    hideLoading();
+    Swal.fire('โหลดประวัติไม่สำเร็จ',(e&&e.message)||String(e),'error');
+  });
+}
+
+function _substituteHistoryStatus(status){
+  return {assigned:'จัดแล้ว',completed:'เสร็จสิ้น',cancelled:'ยกเลิก'}[status]||status||'-';
+}
+function _csvValue(value){
+  var text=String(value==null?'':value);
+  if(/^[=+@\-]/.test(text)) text="'"+text;
+  return '"'+text.replace(/"/g,'""')+'"';
+}
+function downloadSubstituteHistoryCsv(){
+  var rows=window._substituteHistoryRows||[];
+  if(!rows.length) return Swal.fire('ไม่มีข้อมูล','ยังไม่มีประวัติสอนแทนให้ดาวน์โหลด','info');
+  var matrix=[['วันที่','คาบ','ชั้น','วิชา','ครูผู้ลา','ครูผู้แทน','สถานะ']];
+  rows.forEach(function(a){
+    matrix.push([a.schedule_date||'',a.period||'',a.class_name||'',a.subject||'',a.original_teacher_name||a.original_teacher_id||'',a.substitute_teacher_name||a.substitute_teacher_id||'',_substituteHistoryStatus(a.status)]);
+  });
+  var csv='\uFEFF'+matrix.map(function(row){return row.map(_csvValue).join(',');}).join('\r\n');
+  var blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  var url=URL.createObjectURL(blob);
+  var link=document.createElement('a');
+  link.href=url;
+  link.download='ประวัติสอนแทน_'+(APP.teacherId||'ทั้งหมด')+'.csv';
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(function(){URL.revokeObjectURL(url);},1000);
+}
+function printSubstituteHistory(){
+  var rows=(window._substituteHistoryRows||[]).slice();
+  if(!rows.length) return Swal.fire('ไม่มีข้อมูล','ยังไม่มีประวัติสอนแทนให้พิมพ์','info');
+  rows.sort(function(a,b){
+    var dateCompare=String(b.schedule_date||'').localeCompare(String(a.schedule_date||''));
+    return dateCompare||Number(a.period||0)-Number(b.period||0);
+  });
+  var body=rows.map(function(a,i){
+    return '<tr><td>'+(i+1)+'</td><td>'+_toBE(a.schedule_date)+'</td><td>'+_esc(a.period||'-')+'</td><td>'+_esc(a.class_name||'-')+'</td><td>'+_esc(a.subject||'-')+'</td><td>'+_esc(a.original_teacher_name||a.original_teacher_id||'-')+'</td><td>'+_esc(a.substitute_teacher_name||a.substitute_teacher_id||'-')+'</td><td>'+_esc(_substituteHistoryStatus(a.status))+'</td></tr>';
+  }).join('');
+  var title='ประวัติสอนแทน';
+  var html='<!doctype html><html lang="th"><head><meta charset="utf-8"><title>'+title+'</title><style>@page{size:A4 a4 landscape;margin:20mm}body{font-family:"TH Sarabun New",Tahoma,sans-serif;color:#111;font-size:28px}h1{text-align:center;font-size:28px;margin:0 0 20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #333;padding:5px;text-align:left}th{text-align:center;background:#eee}td:first-child,td:nth-child(3){text-align:center}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}</style></head><body><h1>'+title+'</h1><table><thead><tr><th>#</th><th>วันที่</th><th>คาบ</th><th>ชั้น</th><th>วิชา</th><th>ครู (ลา)</th><th>ครู (แทน)</th><th>สถานะ</th></tr></thead><tbody>'+body+'</tbody></table></body></html>';
+  var win=window.open('','_blank');
+  if(!win) return Swal.fire('เปิดหน้าพิมพ์ไม่ได้','กรุณาอนุญาต Pop-up แล้วลองอีกครั้ง','warning');
+  win.document.open(); win.document.write(html); win.document.close(); win.focus();
+  setTimeout(function(){win.print();},300);
+}
+
+function doCancelAssignment(assignmentId){
+  Swal.fire({title:'ยกเลิกการจัดสอนแทน?',text:'ต้องการยกเลิกการจัดสอนแทนนี้หรือไม่?',icon:'warning',showCancelButton:true,confirmButtonText:'ยกเลิกสอนแทน',confirmButtonColor:'#ef4444',cancelButtonText:'ไม่'}).then(function(r){
+    if(r.isConfirmed){
+      showLoading('กำลังยกเลิก...');
+      apiCall("cancelAssignment", [assignmentId,APP.token]).then(function(res){
+        hideLoading();
+        if(res.success){ Swal.fire({icon:'success',title:'ยกเลิกสำเร็จ',timer:1500,showConfirmButton:false}); loadSubstituteHistory(); }
+        else Swal.fire('ผิดพลาด',res.message,'error');
+      }).catch(function(e){ hideLoading(); Swal.fire('ผิดพลาด',e.message,'error'); });
+    }
+  });
+}
+
+function doEditAssignment(assignmentId,schedDate,period){
+  document.getElementById('availableTeachersList').innerHTML='<div class="text-center py-3"><i class="fas fa-spinner fa-spin"></i> กำลังค้นหาครูที่ว่าง...</div>';
+  document.getElementById('assignSlotInfo').innerHTML='<b>แก้ไขครูสอนแทน</b> | <b>วันที่:</b> '+schedDate+' | <b>คาบ:</b> '+period;
+  window._editAssignmentId=assignmentId;
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('assignModal')).show();
+  apiCall("findAvailableTeachers", [schedDate,period,APP.token]).then(function(r){
+    var list=r.data||[];
+    if(list.length===0){ document.getElementById('availableTeachersList').innerHTML='<div class="text-muted text-center py-3">ไม่พบครูที่ว่าง</div>'; return; }
+    document.getElementById('availableTeachersList').innerHTML=list.map(function(t){
+      return '<div class="file-item mb-2"><div class="file-info"><div><div class="file-name">'+_esc(t.name)+'</div><div class="text-muted" style="font-size:.72rem">'+_esc(t.department||'-')+' | สอนแทนสัปดาห์นี้: '+t.substitute_count+' คาบ</div></div></div>'+
+      '<button class="btn btn-primary btn-xs" onclick="doSaveEditAssignment(\''+t.teacher_id+'\')"><i class="fas fa-check me-1"></i>เลือก</button></div>';
+    }).join('');
+  });
+}
+
+function doSaveEditAssignment(newSubTeacherId){
+  var assignmentId=window._editAssignmentId;
+  if(!assignmentId) return;
+  showLoading('กำลังบันทึก...');
+  apiCall("updateAssignmentTeacher", [assignmentId,newSubTeacherId,APP.token]).then(function(res){
+    hideLoading();
+    bootstrap.Modal.getInstance(document.getElementById('assignModal')).hide();
+    if(res.success){ Swal.fire({icon:'success',title:'แก้ไขสำเร็จ',timer:1500,showConfirmButton:false}); loadSubstituteHistory(); }
+    else Swal.fire('ผิดพลาด',res.message,'error');
+  }).catch(function(e){ hideLoading(); Swal.fire('ผิดพลาด',e.message,'error'); });
+}
+
+// ── SUBSTITUTE ASSIGNMENT DOCUMENT ──
+window._substituteAssignmentDocHtml='';
+function initSubstituteAssignmentDocument(){
+  var input=document.getElementById('substituteDocDate');
+  if(!input.value){
+    var now=new Date();
+    input.value=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+  }
+}
+function clearSubstituteAssignmentDocumentPreview(){
+  window._substituteAssignmentDocHtml='';
+  document.getElementById('substituteAssignmentDocumentPreview').hidden=true;
+  document.getElementById('substituteDocPrintBtn').disabled=true;
+  document.getElementById('substituteDocDownloadBtn').disabled=true;
+}
+function loadSubstituteAssignmentDocument(){
+  var date=document.getElementById('substituteDocDate').value;
+  if(!date) return Swal.fire('แจ้งเตือน','กรุณาเลือกวันที่ลา','warning');
+  clearSubstituteAssignmentDocumentPreview();
+  showLoading('กำลังจัดทำใบมอบหมาย...');
+  apiCall("getAllAssignments", [APP.token]).then(function(r){
+    hideLoading();
+    if(!r||!r.success){
+      Swal.fire('โหลดข้อมูลไม่สำเร็จ',(r&&r.message)||'กรุณาลองใหม่อีกครั้ง','error');
+      return;
+    }
+    var assignments=(r.data||[]).filter(function(a){
+      return String(a.schedule_date||'').slice(0,10)===date&&a.status!=='cancelled';
+    });
+    if(!assignments.length){
+      window._substituteAssignmentDocHtml='';
+      document.getElementById('substituteAssignmentDocumentPreview').hidden=true;
+      document.getElementById('substituteDocPrintBtn').disabled=true;
+      document.getElementById('substituteDocDownloadBtn').disabled=true;
+      document.getElementById('substituteDocMessage').textContent='ไม่พบรายการสอนแทนในวันที่ '+_toBE(date);
+      return;
+    }
+    window._substituteAssignmentDocHtml=_buildSubstituteAssignmentDocumentHtml(date,assignments);
+    var frame=document.getElementById('substituteAssignmentDocumentPreview');
+    frame.srcdoc=window._substituteAssignmentDocHtml;
+    frame.hidden=false;
+    document.getElementById('substituteDocPrintBtn').disabled=false;
+    document.getElementById('substituteDocDownloadBtn').disabled=false;
+    document.getElementById('substituteDocMessage').textContent='พบ '+assignments.length+' รายการสอนแทน สำหรับวันที่ '+_toBE(date);
+  }).catch(function(e){
+    hideLoading();
+    Swal.fire('โหลดข้อมูลไม่สำเร็จ',(e&&e.message)||String(e),'error');
+  });
+}
+function _buildSubstituteAssignmentDocumentHtml(date,assignments){
+  var groups=[],byTeacher={};
+  assignments.forEach(function(a){
+    var key=String(a.original_teacher_id||a.original_teacher_name||'unknown');
+    if(!byTeacher[key]){
+      byTeacher[key]={name:a.original_teacher_name||a.original_teacher_id||'-',rows:[]};
+      groups.push(byTeacher[key]);
+    }
+    byTeacher[key].rows.push(a);
+  });
+  var sections=groups.map(function(group){
+    group.rows.sort(function(a,b){ return Number(a.period||0)-Number(b.period||0); });
+    var rows=group.rows.map(function(a){
+      return '<tr><td class="period">'+_esc(a.period||'-')+'</td><td>'+_esc(a.class_name||'-')+'</td><td>'+_esc(a.subject||'-')+'</td><td>'+_esc(a.substitute_teacher_name||a.substitute_teacher_id||'-')+'</td></tr>';
+    }).join('');
+    return '<section class="teacher-block"><h2>ครูผู้ขอลา: '+_esc(group.name)+'</h2><table><thead><tr><th>คาบที่</th><th>ชั้นเรียน</th><th>รายวิชา</th><th>ครูผู้เข้าสอนแทน</th></tr></thead><tbody>'+rows+'</tbody></table></section>';
+  }).join('');
+  return '<!doctype html><html lang="th"><head><meta charset="utf-8"><title>ใบมอบหมายงานสอนแทน '+_esc(date)+'</title><style>'+
+    '@page{size:A4 portrait;margin:15mm 14mm}*{box-sizing:border-box}body{font-family: "TH Sarabun New", sans-serif; color:#111;font-size:25px;margin:0}h1{text-align:center;font-size:25px;margin:0 0 5px} .leave-date{text-align:center;font-size:25px;margin:0 0 22px}.teacher-block{margin:0 0 18px;break-inside:avoid;page-break-inside:avoid}h2{font-size:25px;margin:0 0 7px}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #333;padding:7px 6px;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{background:#f1f3f5;text-align:center;font-weight:700}.period{text-align:center;width:12%}th:nth-child(2){width:18%}th:nth-child(3){width:32%}th:nth-child(4){width:38%}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}@media screen{body{padding:18px;max-width:210mm;margin:0 auto}.teacher-block{margin-bottom:22px}}'+
+    '</style></head><body><h1>ใบมอบหมายงานสอนแทน โรงเรียนเปรมติณสูลานนท์</h1><p class="leave-date">วันที่ลา '+_toBE(date)+'</p>'+sections+'</body></html>';
+}
+function printSubstituteAssignmentDocument(){
+  if(!window._substituteAssignmentDocHtml) return;
+  var win=window.open('','_blank');
+  if(!win) return Swal.fire('เปิดหน้าพิมพ์ไม่ได้','กรุณาอนุญาต Pop-up แล้วกดพิมพ์อีกครั้ง','warning');
+  win.document.open();
+  win.document.write(window._substituteAssignmentDocHtml);
+  win.document.close();
+  win.focus();
+  setTimeout(function(){ win.print(); },300);
+}
+function downloadSubstituteAssignmentDocument(){
+  if(!window._substituteAssignmentDocHtml) return;
+  var date=document.getElementById('substituteDocDate').value;
+  var blob=new Blob([window._substituteAssignmentDocHtml],{type:'text/html;charset=utf-8'});
+  var url=URL.createObjectURL(blob);
+  var link=document.createElement('a');
+  link.href=url;
+  link.download='ใบมอบหมายงานสอนแทน_'+date+'.html';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(function(){URL.revokeObjectURL(url);},1000);
+}
+</script>
